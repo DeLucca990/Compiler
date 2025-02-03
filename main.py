@@ -27,4 +27,4 @@ if current_number:
     elif current_operator == "-":
         result -= int(current_number)
 
-print(f"Saída: {result}")
+print(result)
