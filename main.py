@@ -30,6 +30,12 @@ class Tokenizer:
         elif current_char == '-':
             self.next = Token('MINUS', None)
             self.position += 1
+        elif current_char == '*':
+            self.next = Token('MULTIPLY', None)
+            self.position += 1
+        elif current_char == '/':
+            self.next = Token('DIVIDE', None)
+            self.position += 1
         else:
             raise ValueError(f'Caractere inválido: {current_char}')
 
@@ -38,36 +44,36 @@ class Parser:
         self.tokenizer = tokenizer
     
     def parseExpression(self):
-        has_plus = False
-        has_minus = False
-
-        token = self.tokenizer.next
-        if token.type != "NUMBER":
-            raise ValueError(f'Número esperado, mas obtido: {token}')
-        result = token.value
-
-        self.tokenizer.selectNext()
-        while self.tokenizer.next.type in ("PLUS", "MINUS"):
+        left = self.parseTerm()
+        while self.tokenizer.next.type in ('PLUS', 'MINUS'):
             op = self.tokenizer.next
-            if op.type == 'PLUS':
-                has_plus = True
-            if op.type == 'MINUS':
-                has_minus = True
-            
             self.tokenizer.selectNext()
-            token = self.tokenizer.next
-            if token.type != "NUMBER":
-                raise ValueError(f'Número esperado, mas obtido: {token}')
+            right = self.parseTerm()
             if op.type == 'PLUS':
-                result += token.value
-            if op.type == 'MINUS':
-                result -= token.value
+                left += right
+            elif op.type == 'MINUS':
+                left -= right
+        return left
+    
+    def parseTerm(self):
+        if self.tokenizer.next.type != 'NUMBER':
+            raise ValueError('Número esperado, mas não encontrado')
+        left = self.tokenizer.next.value
+        self.tokenizer.selectNext()
+        while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
+            op = self.tokenizer.next
             self.tokenizer.selectNext()
-        
-        if not(has_plus or has_minus):
-            raise ValueError('Expressão inválida, esperado + ou -')
-        
-        return result
+            if self.tokenizer.next.type != 'NUMBER':
+                raise ValueError('Número esperado, mas não encontrado')
+            right = self.tokenizer.next.value
+            self.tokenizer.selectNext()
+            if op.type == 'MULTIPLY':
+                left *= right
+            elif op.type == 'DIVIDE':
+                if right == 0:
+                    raise ValueError('Divisão por zero')
+                left //= right
+        return left
 
     @staticmethod
     def run(code):
