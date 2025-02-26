@@ -119,4 +119,4 @@ if __name__ == '__main__':
     if code == "":
         raise ValueError('Expressão inválida')
 
-    #print(Parser.run(code))
+    print(Parser.run(code))
