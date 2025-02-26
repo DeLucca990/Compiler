@@ -36,6 +36,12 @@ class Tokenizer:
         elif current_char == '/':
             self.next = Token('DIVIDE', None)
             self.position += 1
+        elif current_char == '(':
+            self.next = Token('LPAREN', None)
+            self.position += 1
+        elif current_char == ')':
+            self.next = Token('RPAREN', None)
+            self.position += 1
         else:
             raise ValueError(f'Caractere inválido: {current_char}')
 
@@ -56,17 +62,11 @@ class Parser:
         return left
     
     def parseTerm(self):
-        if self.tokenizer.next.type != 'NUMBER':
-            raise ValueError('Número esperado, mas não encontrado')
-        left = self.tokenizer.next.value
-        self.tokenizer.selectNext()
+        left = self.parseFactor()
         while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
             op = self.tokenizer.next
             self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'NUMBER':
-                raise ValueError('Número esperado, mas não encontrado')
-            right = self.tokenizer.next.value
-            self.tokenizer.selectNext()
+            right = self.parseFactor()
             if op.type == 'MULTIPLY':
                 left *= right
             elif op.type == 'DIVIDE':
@@ -74,6 +74,27 @@ class Parser:
                     raise ValueError('Divisão por zero')
                 left //= right
         return left
+
+    def parseFactor(self):
+        if self.tokenizer.next.type == 'NUMBER':
+            result = self.tokenizer.next.value
+            self.tokenizer.selectNext()
+            return result
+        elif self.tokenizer.next.type == 'PLUS':
+            self.tokenizer.selectNext()
+            return self.parseFactor()
+        elif self.tokenizer.next.type == 'MINUS':
+            self.tokenizer.selectNext()
+            return -self.parseFactor()
+        elif self.tokenizer.next.type == 'LPAREN':
+            self.tokenizer.selectNext()
+            result = self.parseExpression()
+            if self.tokenizer.next.type != 'RPAREN':
+                raise ValueError('Parêntese de fechamento esperado')
+            self.tokenizer.selectNext()
+            return result
+        else:
+            raise ValueError("Fator inválido")
 
     @staticmethod
     def run(code):
@@ -90,7 +111,7 @@ if __name__ == '__main__':
     import sys
 
     if len(sys.argv) != 2:
-        print('python3 main.py <expressão>')
+        print("python3 main.py '<expressão>'")
         raise ValueError('Argumentos inválidos')
 
     code = sys.argv[1]
@@ -98,4 +119,4 @@ if __name__ == '__main__':
     if code == "":
         raise ValueError('Expressão inválida')
 
-    print(Parser.run(code))
+    #print(Parser.run(code))
