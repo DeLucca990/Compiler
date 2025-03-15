@@ -182,7 +182,7 @@ def main(file):
 
         result = ast.evaluate()
 
-        print(result)
+        #print(result)
         return result
     except FileNotFoundError:
         print(f"Erro: Arquivo '{file}' não encontrado.")
