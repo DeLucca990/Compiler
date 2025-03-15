@@ -1,7 +1,19 @@
+import sys
+import re
+
+class PrePro:
+    @staticmethod
+    def filter(code):
+        code = re.sub(r'\/\/.*', '', code)
+        return code
+
 class Token:
     def __init__(self, type, value):
         self.type = type
         self.value = value
+    
+    def __str__(self):
+        return f"Token({self.type}, {self.value})"
 
 class Tokenizer:
     def __init__(self, source):
@@ -45,47 +57,98 @@ class Tokenizer:
         else:
             raise ValueError(f'Caractere inválido: {current_char}')
 
+class Node:
+    def __init__(self):
+        self.value = None
+        self.children = []
+
+    def evaluate(self):
+        pass
+
+class BinOp(Node):
+    def __init__(self, value, left, right):
+        super().__init__()
+        self.value = value
+        self.children = [left, right]
+
+    def evaluate(self):
+        if self.value == '+':
+            return self.children[0].evaluate() + self.children[1].evaluate()
+        elif self.value == '-':
+            return self.children[0].evaluate() - self.children[1].evaluate()
+        elif self.value == '*':
+            return self.children[0].evaluate() * self.children[1].evaluate()
+        elif self.value == '/':
+            divisor = self.children[1].evaluate()
+            if divisor == 0:
+                raise ValueError('Divisão por zero')
+            return self.children[0].evaluate() // divisor
+
+class UnOp(Node):
+    def __init__(self, value, child):
+        super().__init__()
+        self.value = value
+        self.children = [child]
+
+    def evaluate(self):
+        if self.value == '+':
+            return self.children[0].evaluate()
+        elif self.value == '-':
+            return -self.children[0].evaluate()
+
+class IntVal(Node):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def evaluate(self):
+        return self.value
+
+class NoOp(Node):
+    def __init__(self):
+        super().__init__()
+
+    def evaluate(self):
+        return 0
+
 class Parser:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
+        self.tokenizer.selectNext()
     
     def parseExpression(self):
-        left = self.parseTerm()
+        result = self.parseTerm()
         while self.tokenizer.next.type in ('PLUS', 'MINUS'):
-            op = self.tokenizer.next
-            self.tokenizer.selectNext()
-            right = self.parseTerm()
-            if op.type == 'PLUS':
-                left += right
-            elif op.type == 'MINUS':
-                left -= right
-        return left
+            if self.tokenizer.next.type == 'PLUS':
+                self.tokenizer.selectNext()
+                result = BinOp('+', result, self.parseTerm())
+            elif self.tokenizer.next.type == 'MINUS':
+                self.tokenizer.selectNext()
+                result = BinOp('-', result, self.parseTerm())
+        return result
     
     def parseTerm(self):
-        left = self.parseFactor()
+        result = self.parseFactor()
         while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
-            op = self.tokenizer.next
-            self.tokenizer.selectNext()
-            right = self.parseFactor()
-            if op.type == 'MULTIPLY':
-                left *= right
-            elif op.type == 'DIVIDE':
-                if right == 0:
-                    raise ValueError('Divisão por zero')
-                left //= right
-        return left
+            if self.tokenizer.next.type == 'MULTIPLY':
+                self.tokenizer.selectNext()
+                result = BinOp('*', result, self.parseFactor())
+            elif self.tokenizer.next.type == 'DIVIDE':
+                self.tokenizer.selectNext()
+                result = BinOp('/', result, self.parseFactor())
+        return result
 
     def parseFactor(self):
         if self.tokenizer.next.type == 'NUMBER':
-            result = self.tokenizer.next.value
+            result = IntVal(self.tokenizer.next.value)
             self.tokenizer.selectNext()
             return result
         elif self.tokenizer.next.type == 'PLUS':
             self.tokenizer.selectNext()
-            return self.parseFactor()
+            return UnOp('+', self.parseFactor())
         elif self.tokenizer.next.type == 'MINUS':
             self.tokenizer.selectNext()
-            return -self.parseFactor()
+            return UnOp('-', self.parseFactor())
         elif self.tokenizer.next.type == 'LPAREN':
             self.tokenizer.selectNext()
             result = self.parseExpression()
@@ -96,27 +159,42 @@ class Parser:
         else:
             raise ValueError("Fator inválido")
 
-    @staticmethod
-    def run(code):
-        tokenizer = Tokenizer(code)
-        tokenizer.selectNext()
-        parser = Parser(tokenizer)
-        result = parser.parseExpression()
-
-        if tokenizer.next.type != "EOF":
-            raise ValueError(f'EOF esperado, mas obtido: {tokenizer.next}')
+    def parse(self):
+        result = self.parseExpression()
+        if self.tokenizer.next.type != 'EOF':
+            raise ValueError(f'EOF esperado, mas obtido: {self.tokenizer.next}')
         return result
 
+def main(file):
+    try:
+        with open(file, 'r') as f:
+            code = f.read()
+        
+        filtered_code = PrePro.filter(code)
+
+        if not filtered_code.strip():
+            raise ValueError('Código vazio')
+        
+        tokenizer = Tokenizer(filtered_code)
+        parser = Parser(tokenizer)
+
+        ast = parser.parse()
+
+        result = ast.evaluate()
+
+        print(result)
+        return result
+    except FileNotFoundError:
+        print(f"Erro: Arquivo '{file}' não encontrado.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Erro: {e}")
+        sys.exit(1)
+
 if __name__ == '__main__':
-    import sys
-
     if len(sys.argv) != 2:
-        print("python3 main.py '<expressão>'")
-        raise ValueError('Argumentos inválidos')
-
-    code = sys.argv[1]
-
-    if code == "":
-        raise ValueError('Expressão inválida')
-
-    print(Parser.run(code))
+        print("Uso: python3 main.py <arquivo>")
+        sys.exit(1)
+    
+    file = sys.argv[1]
+    main(file)
