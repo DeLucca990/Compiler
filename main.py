@@ -182,14 +182,13 @@ def main(file):
 
         result = ast.evaluate()
 
-        #print(result)
+        print(result)
         return result
     except FileNotFoundError:
         print(f"Erro: Arquivo '{file}' não encontrado.")
         sys.exit(1)
     except Exception as e:
-        print(f"Erro: {e}")
-        sys.exit(1)
+        raise e
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
