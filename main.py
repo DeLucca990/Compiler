@@ -297,7 +297,7 @@ class Parser:
             self.tokenizer.selectNext()
             expression = self.parseRelExpression()
             if self.tokenizer.next.type not in ('LBRACE', 'RBRACE', 'IF', 'FOR', 'PRINTLN', 'IDENTIFIER', 'EOF'):
-                raise ValueError(f"Unexpected token {self.tokenizer.next.type} (expected EOL)")
+                raise ValueError('Esperado } após a expressão')
             return Assignment(identifier, expression)
         
         # If
@@ -305,10 +305,16 @@ class Parser:
             self.tokenizer.selectNext()
             condition = self.parseRelExpression()
             then_block = self.parseStatement()
+            if isinstance(then_block, Block) and not then_block.children:
+                raise ValueError('Esperado } após o bloco')
             else_block = None
             if self.tokenizer.next.type == 'ELSE':
                 self.tokenizer.selectNext()
+                if self.tokenizer.next.type != 'LBRACE':
+                    raise ValueError('Esperado { após else')
                 else_block = self.parseStatement()
+                if isinstance(else_block, Block) and not else_block.children:
+                    raise ValueError('Esperado } após o bloco')
             return If(condition, then_block, else_block)
         
         # Loop for
@@ -316,6 +322,8 @@ class Parser:
             self.tokenizer.selectNext()
             condition = self.parseRelExpression()
             block = self.parseStatement()
+            if isinstance(block, Block) and not block.children:
+                raise ValueError('Esperado } após o bloco')
             return For(NoOp(), condition, NoOp(), block)
         
         else:
