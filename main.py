@@ -304,6 +304,8 @@ class Parser:
         elif self.tokenizer.next.type == 'IF':
             self.tokenizer.selectNext()
             condition = self.parseRelExpression()
+            if self.tokenizer.next.type != 'LBRACE':
+                raise ValueError('Esperado { após if')
             then_block = self.parseStatement()
             if isinstance(then_block, Block) and not then_block.children:
                 raise ValueError('Esperado } após o bloco')
@@ -321,6 +323,8 @@ class Parser:
         elif self.tokenizer.next.type == 'FOR':
             self.tokenizer.selectNext()
             condition = self.parseRelExpression()
+            if self.tokenizer.next.type != 'LBRACE':
+                raise ValueError('Esperado { após for')
             block = self.parseStatement()
             if isinstance(block, Block) and not block.children:
                 raise ValueError('Esperado } após o bloco')
