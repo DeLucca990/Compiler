@@ -15,7 +15,7 @@ class Token:
     
     def __str__(self):
         return f"Token({self.type}, {self.value})"
-    
+
 class SymbolTable:
     def __init__(self):
         self.symbols = {}
@@ -33,6 +33,10 @@ class Tokenizer:
         self.next = None
         self.keywords = {
             "Println": "PRINTLN",
+            "if": "IF",
+            "else": "ELSE",
+            "for": "FOR",
+            "Scan": "SCAN",
         }
 
     def selectNext(self):
@@ -87,7 +91,26 @@ class Tokenizer:
             self.next = Token('RBRACE', None)
             self.position += 1
         elif current_char == '=':
-            self.next = Token('ASSIGN', None)
+            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '=':
+                self.next = Token('EQUALS', None)
+                self.position += 2
+            else:
+                self.next = Token('ASSIGN', None)
+                self.position += 1
+        elif current_char == '>':
+                self.next = Token('GREATER', None)
+                self.position += 1
+        elif current_char == '<':
+                self.next = Token('LESS', None)
+                self.position += 1
+        elif current_char == '&' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '&':
+            self.next = Token('AND', None)
+            self.position += 2
+        elif current_char == '|' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '|':
+            self.next = Token('OR', None)
+            self.position += 2
+        elif current_char == '!':
+            self.next = Token('NOT', None)
             self.position += 1
         else:
             raise ValueError(f'Caractere inválido: {current_char}')
@@ -100,6 +123,46 @@ class Node:
     def evaluate(self):
         pass
 
+class If(Node):
+    def __init__(self, condition, then_block, else_block=None):
+        super().__init__()
+        self.condition = condition
+        self.then_block = then_block
+        self.else_block = else_block
+
+    def evaluate(self, symbol_table):
+        if self.condition.evaluate(symbol_table):
+            return self.then_block.evaluate(symbol_table)
+        elif self.else_block:
+            return self.else_block.evaluate(symbol_table)
+
+class For(Node):
+    def __init__(self, init, condition, increment, block):
+        super().__init__()
+        self.init = init
+        self.condition = condition
+        self.increment = increment
+        self.block = block
+
+    def evaluate(self, symbol_table):
+        self.init.evaluate(symbol_table)
+        while self.condition.evaluate(symbol_table):
+            self.block.evaluate(symbol_table)
+            self.increment.evaluate(symbol_table)
+
+class Scan(Node):
+    def __init__(self, identifier):
+        super().__init__()
+        self.identifier = identifier
+    
+    def evaluate(self, symbol_table):
+        input_value = input()
+        try:
+            value = int(input_value)
+        except ValueError:
+            raise ValueError(f"Entrada inválida: '{input_value}' não é um número")
+        symbol_table.set(self.identifier.value, value)
+
 class BinOp(Node):
     def __init__(self, value, left, right):
         super().__init__()
@@ -107,17 +170,28 @@ class BinOp(Node):
         self.children = [left, right]
 
     def evaluate(self, symbol_table):
+        left_val = self.children[0].evaluate(symbol_table)
+        right_val = self.children[1].evaluate(symbol_table)
         if self.value == '+':
-            return self.children[0].evaluate(symbol_table) + self.children[1].evaluate(symbol_table)
+            return left_val + right_val
         elif self.value == '-':
-            return self.children[0].evaluate(symbol_table) - self.children[1].evaluate(symbol_table)
+            return left_val - right_val
         elif self.value == '*':
-            return self.children[0].evaluate(symbol_table) * self.children[1].evaluate(symbol_table)
+            return left_val * right_val
         elif self.value == '/':
-            divisor = self.children[1].evaluate(symbol_table)
-            if divisor == 0:
+            if right_val == 0:
                 raise ValueError('Divisão por zero')
-            return self.children[0].evaluate(symbol_table) // divisor
+            return left_val // right_val
+        elif self.value == '==':
+            return left_val == right_val
+        elif self.value == '>':
+            return left_val > right_val
+        elif self.value == '<':
+            return left_val < right_val
+        elif self.value == '&&':
+            return left_val and right_val
+        elif self.value == '||':
+            return left_val or right_val
 
 class UnOp(Node):
     def __init__(self, value, child):
@@ -126,10 +200,13 @@ class UnOp(Node):
         self.children = [child]
 
     def evaluate(self, symbol_table):
+        child_val = self.children[0].evaluate(symbol_table)
         if self.value == '+':
-            return self.children[0].evaluate(symbol_table)
+            return child_val
         elif self.value == '-':
-            return -self.children[0].evaluate(symbol_table)
+            return -child_val
+        elif self.value == '!':
+            return not child_val
 
 class IntVal(Node):
     def __init__(self, value):
@@ -192,7 +269,7 @@ class Parser:
             if self.tokenizer.next.type != 'LPAREN':
                 raise ValueError('Parêntese de abertura esperado')
             self.tokenizer.selectNext()
-            expression = self.parseExpression()
+            expression = self.parseRelExpression()
             if self.tokenizer.next.type != 'RPAREN':
                 raise ValueError('Parêntese de fechamento esperado')
             self.tokenizer.selectNext()
@@ -216,16 +293,65 @@ class Parser:
             if self.tokenizer.next.type != 'ASSIGN':
                 raise ValueError('Esperado = após identificador')
             self.tokenizer.selectNext()
-
-            expression = self.parseExpression()
-            
+            expression = self.parseRelExpression()
             return Assignment(identifier, expression)
+        
+        # If
+        elif self.tokenizer.next.type == 'IF':
+            self.tokenizer.selectNext()
+            condition = self.parseRelExpression()
+            then_block = self.parseStatement()
+            else_block = None
+            if self.tokenizer.next.type == 'ELSE':
+                self.tokenizer.selectNext()
+                else_block = self.parseStatement()
+            return If(condition, then_block, else_block)
+        
+        # Loop for
+        elif self.tokenizer.next.type == 'FOR':
+            self.tokenizer.selectNext()
+            condition = self.parseRelExpression()
+            block = self.parseStatement()
+            return For(NoOp(), condition, NoOp(), block)
+        
+        # Scan (lê um valor no terminal)
+        elif self.tokenizer.next.type == 'SCAN':
+            self.tokenizer.selectNext() 
+            if self.tokenizer.next.type != 'LPAREN':
+                raise ValueError('Parêntese de abertura esperado')
+            self.tokenizer.selectNext()
+            if self.tokenizer.next.type != 'IDENTIFIER':
+                raise ValueError('Identificador esperado')
+            identifier = Identifier(self.tokenizer.next.value)
+            self.tokenizer.selectNext() 
+            if self.tokenizer.next.type != 'RPAREN':
+                raise ValueError('Parêntese de fechamento esperado')
+            self.tokenizer.selectNext() 
+            return Scan(identifier)
 
-        # Expressão como instrução
         else:
-            expression = self.parseExpression()
-            return expression
-    
+            return self.parseRelExpression()
+
+    def parseRelExpression(self):
+        result = self.parseExpression()
+        while self.tokenizer.next.type in ('LESS', 'GREATER', 'EQUALS', 'OR', 'AND'):
+            if self.tokenizer.next.type == 'LESS':
+                self.tokenizer.selectNext()
+                result = BinOp('<', result, self.parseExpression())
+            elif self.tokenizer.next.type == 'GREATER':
+                self.tokenizer.selectNext()
+                result = BinOp('>', result, self.parseExpression())
+            elif self.tokenizer.next.type == 'EQUALS':
+                self.tokenizer.selectNext()
+                result = BinOp('==', result, self.parseExpression())
+            elif self.tokenizer.next.type == 'OR':
+                self.tokenizer.selectNext()
+                result = BinOp('||', result, self.parseExpression())
+            elif self.tokenizer.next.type == 'AND':
+                self.tokenizer.selectNext()
+                result = BinOp('&&', result, self.parseExpression())
+        return result
+
     def parseExpression(self):
         result = self.parseTerm()
         while self.tokenizer.next.type in ('PLUS', 'MINUS'):
@@ -236,7 +362,7 @@ class Parser:
                 self.tokenizer.selectNext()
                 result = BinOp('-', result, self.parseTerm())
         return result
-    
+
     def parseTerm(self):
         result = self.parseFactor()
         while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
@@ -265,20 +391,20 @@ class Parser:
             return UnOp('-', self.parseFactor())
         elif self.tokenizer.next.type == 'LPAREN':
             self.tokenizer.selectNext()
-            result = self.parseExpression()
+            result = self.parseRelExpression()
             if self.tokenizer.next.type != 'RPAREN':
                 raise ValueError('Parêntese de fechamento esperado')
             self.tokenizer.selectNext()
             return result
         else:
             raise ValueError("Fator inválido")
-    
+
     def parse(self):
-        statments = []
+        statements = []
         while self.tokenizer.next.type != 'EOF':
-            statment = self.parseStatement()
-            statments.append(statment)
-        return Block(statments)
+            statement = self.parseStatement()
+            statements.append(statement)
+        return Block(statements)
 
 def main(file):
     try:
