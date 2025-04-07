@@ -98,11 +98,11 @@ class Tokenizer:
                 self.next = Token('ASSIGN', None)
                 self.position += 1
         elif current_char == '>':
-                self.next = Token('GREATER', None)
-                self.position += 1
+            self.next = Token('GREATER', None)
+            self.position += 1
         elif current_char == '<':
-                self.next = Token('LESS', None)
-                self.position += 1
+            self.next = Token('LESS', None)
+            self.position += 1
         elif current_char == '&' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '&':
             self.next = Token('AND', None)
             self.position += 2
@@ -279,8 +279,12 @@ class Parser:
             self.tokenizer.selectNext()
             statements = []
             while self.tokenizer.next.type != 'RBRACE':
+                if self.tokenizer.next.type == 'LBRACE':
+                    raise ValueError('Esperado } após o bloco')
                 statement = self.parseStatement()
                 statements.append(statement)
+                if self.tokenizer.next.type == 'LBRACE' and self.tokenizer.next.type != 'RBRACE':
+                    raise ValueError('Esperado } após o bloco')
             self.tokenizer.selectNext()
             return Block(statements)
 
@@ -288,11 +292,12 @@ class Parser:
         elif self.tokenizer.next.type == 'IDENTIFIER':
             identifier = Identifier(self.tokenizer.next.value)
             self.tokenizer.selectNext()
-
             if self.tokenizer.next.type != 'ASSIGN':
                 raise ValueError('Esperado = após identificador')
             self.tokenizer.selectNext()
             expression = self.parseRelExpression()
+            if self.tokenizer.next.type not in ('LBRACE', 'RBRACE', 'IF', 'FOR', 'PRINTLN', 'IDENTIFIER', 'EOF'):
+                raise ValueError(f"Unexpected token {self.tokenizer.next.type} (expected EOL)")
             return Assignment(identifier, expression)
         
         # If
@@ -396,11 +401,12 @@ class Parser:
             raise ValueError("Fator inválido")
 
     def parse(self):
-        statements = []
-        while self.tokenizer.next.type != 'EOF':
-            statement = self.parseStatement()
-            statements.append(statement)
-        return Block(statements)
+        if self.tokenizer.next.type != 'LBRACE':
+            raise ValueError('Esperado { no início do bloco')
+        block = self.parseStatement()
+        if self.tokenizer.next.type != 'EOF':
+            raise ValueError('Esperado EOF após o bloco')
+        return block
 
 def main(file):
     try:
