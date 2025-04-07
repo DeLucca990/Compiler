@@ -151,17 +151,16 @@ class For(Node):
             self.increment.evaluate(symbol_table)
 
 class Scan(Node):
-    def __init__(self, identifier):
+    def __init__(self):
         super().__init__()
-        self.identifier = identifier
     
     def evaluate(self, symbol_table):
         input_value = input()
         try:
             value = int(input_value)
+            return value
         except ValueError:
             raise ValueError(f"Entrada inválida: '{input_value}' não é um número")
-        symbol_table.set(self.identifier.value, value)
 
 class BinOp(Node):
     def __init__(self, value, left, right):
@@ -314,21 +313,6 @@ class Parser:
             block = self.parseStatement()
             return For(NoOp(), condition, NoOp(), block)
         
-        # Scan (lê um valor no terminal)
-        elif self.tokenizer.next.type == 'SCAN':
-            self.tokenizer.selectNext() 
-            if self.tokenizer.next.type != 'LPAREN':
-                raise ValueError('Parêntese de abertura esperado')
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'IDENTIFIER':
-                raise ValueError('Identificador esperado')
-            identifier = Identifier(self.tokenizer.next.value)
-            self.tokenizer.selectNext() 
-            if self.tokenizer.next.type != 'RPAREN':
-                raise ValueError('Parêntese de fechamento esperado')
-            self.tokenizer.selectNext() 
-            return Scan(identifier)
-
         else:
             return self.parseRelExpression()
 
@@ -389,6 +373,18 @@ class Parser:
         elif self.tokenizer.next.type == 'MINUS':
             self.tokenizer.selectNext()
             return UnOp('-', self.parseFactor())
+        elif self.tokenizer.next.type == 'NOT':
+            self.tokenizer.selectNext()
+            return UnOp('!', self.parseFactor())
+        elif self.tokenizer.next.type == 'SCAN':
+            self.tokenizer.selectNext()
+            if self.tokenizer.next.type != 'LPAREN':
+                raise ValueError('Parêntese de abertura esperado após Scan')
+            self.tokenizer.selectNext()
+            if self.tokenizer.next.type != 'RPAREN':
+                raise ValueError('Parêntese de fechamento esperado')
+            self.tokenizer.selectNext()
+            return Scan()
         elif self.tokenizer.next.type == 'LPAREN':
             self.tokenizer.selectNext()
             result = self.parseRelExpression()
