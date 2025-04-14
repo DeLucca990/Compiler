@@ -268,7 +268,7 @@ class Parser:
             if self.tokenizer.next.type != 'LPAREN':
                 raise ValueError('Parêntese de abertura esperado')
             self.tokenizer.selectNext()
-            expression = self.parseRelExpression()
+            expression = self.parseBExpression()
             if self.tokenizer.next.type != 'RPAREN':
                 raise ValueError('Parêntese de fechamento esperado')
             self.tokenizer.selectNext()
@@ -283,7 +283,8 @@ class Parser:
                     raise ValueError('Esperado } após o bloco')
                 statement = self.parseStatement()
                 statements.append(statement)
-                if self.tokenizer.next.type == 'LBRACE' and self.tokenizer.next.type != 'RBRACE':
+                if (self.tokenizer.next.type == 'LBRACE' 
+                    and self.tokenizer.next.type != 'RBRACE'):
                     raise ValueError('Esperado } após o bloco')
             self.tokenizer.selectNext()
             return Block(statements)
@@ -295,15 +296,18 @@ class Parser:
             if self.tokenizer.next.type != 'ASSIGN':
                 raise ValueError('Esperado = após identificador')
             self.tokenizer.selectNext()
-            expression = self.parseRelExpression()
-            if self.tokenizer.next.type not in ('LBRACE', 'RBRACE', 'IF', 'FOR', 'PRINTLN', 'IDENTIFIER', 'EOF'):
-                raise ValueError('Esperado } após a expressão')
+            expression = self.parseBExpression() 
+            if self.tokenizer.next.type not in (
+                'LBRACE', 'RBRACE', 'IF', 'FOR', 
+                'PRINTLN', 'IDENTIFIER', 'EOF'
+            ):
+                raise ValueError('Esperado } ou outra instrução após expressão')
             return Assignment(identifier, expression)
         
         # If
         elif self.tokenizer.next.type == 'IF':
             self.tokenizer.selectNext()
-            condition = self.parseRelExpression()
+            condition = self.parseBExpression()
             if self.tokenizer.next.type != 'LBRACE':
                 raise ValueError('Esperado { após if')
             then_block = self.parseStatement()
@@ -322,7 +326,7 @@ class Parser:
         # Loop for
         elif self.tokenizer.next.type == 'FOR':
             self.tokenizer.selectNext()
-            condition = self.parseRelExpression()
+            condition = self.parseBExpression()
             if self.tokenizer.next.type != 'LBRACE':
                 raise ValueError('Esperado { após for')
             block = self.parseStatement()
@@ -331,26 +335,39 @@ class Parser:
             return For(NoOp(), condition, NoOp(), block)
         
         else:
-            return self.parseRelExpression()
+            return self.parseBExpression()
+
+    def parseBExpression(self):
+        result = self.parseBTerm()
+        while self.tokenizer.next.type == 'OR':
+            self.tokenizer.selectNext()
+            right = self.parseBTerm()
+            result = BinOp('||', result, right)
+        return result
+    
+    def parseBTerm(self):
+        result = self.parseRelExpression()
+        while self.tokenizer.next.type == 'AND':
+            self.tokenizer.selectNext()
+            right = self.parseRelExpression()
+            result = BinOp('&&', result, right)
+        return result
 
     def parseRelExpression(self):
         result = self.parseExpression()
-        while self.tokenizer.next.type in ('LESS', 'GREATER', 'EQUALS', 'OR', 'AND'):
+        while self.tokenizer.next.type in ('LESS', 'GREATER', 'EQUALS'):
             if self.tokenizer.next.type == 'LESS':
                 self.tokenizer.selectNext()
-                result = BinOp('<', result, self.parseExpression())
+                right = self.parseExpression()
+                result = BinOp('<', result, right)
             elif self.tokenizer.next.type == 'GREATER':
                 self.tokenizer.selectNext()
-                result = BinOp('>', result, self.parseExpression())
+                right = self.parseExpression()
+                result = BinOp('>', result, right)
             elif self.tokenizer.next.type == 'EQUALS':
                 self.tokenizer.selectNext()
-                result = BinOp('==', result, self.parseExpression())
-            elif self.tokenizer.next.type == 'OR':
-                self.tokenizer.selectNext()
-                result = BinOp('||', result, self.parseExpression())
-            elif self.tokenizer.next.type == 'AND':
-                self.tokenizer.selectNext()
-                result = BinOp('&&', result, self.parseExpression())
+                right = self.parseExpression()
+                result = BinOp('==', result, right)
         return result
 
     def parseExpression(self):
@@ -358,10 +375,12 @@ class Parser:
         while self.tokenizer.next.type in ('PLUS', 'MINUS'):
             if self.tokenizer.next.type == 'PLUS':
                 self.tokenizer.selectNext()
-                result = BinOp('+', result, self.parseTerm())
+                right = self.parseTerm()
+                result = BinOp('+', result, right)
             elif self.tokenizer.next.type == 'MINUS':
                 self.tokenizer.selectNext()
-                result = BinOp('-', result, self.parseTerm())
+                right = self.parseTerm()
+                result = BinOp('-', result, right)
         return result
 
     def parseTerm(self):
@@ -369,10 +388,12 @@ class Parser:
         while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
             if self.tokenizer.next.type == 'MULTIPLY':
                 self.tokenizer.selectNext()
-                result = BinOp('*', result, self.parseFactor())
+                right = self.parseFactor()
+                result = BinOp('*', result, right)
             elif self.tokenizer.next.type == 'DIVIDE':
                 self.tokenizer.selectNext()
-                result = BinOp('/', result, self.parseFactor())
+                right = self.parseFactor()
+                result = BinOp('/', result, right)
         return result
 
     def parseFactor(self):
@@ -404,7 +425,7 @@ class Parser:
             return Scan()
         elif self.tokenizer.next.type == 'LPAREN':
             self.tokenizer.selectNext()
-            result = self.parseRelExpression()
+            result = self.parseBExpression()
             if self.tokenizer.next.type != 'RPAREN':
                 raise ValueError('Parêntese de fechamento esperado')
             self.tokenizer.selectNext()
