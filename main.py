@@ -210,10 +210,14 @@ class For(Node):
 class Scan(Node):
     def __init__(self):
         super().__init__()
-    
+        
     def evaluate(self, symbol_table):
-        input_value = input()
-        return (input_value, 'string')
+        input_value = input().strip()
+        try:
+            val_int = int(input_value)
+            return (val_int, 'int')
+        except ValueError:
+            return (input_value, 'string')
 
 class BinOp(Node):
     def __init__(self, value, left, right):
@@ -233,14 +237,21 @@ class BinOp(Node):
             
             if op == '==':
                 return (left_val == right_val, 'bool')
-            elif op == '>':
-                if left_type != 'int':
-                    raise ValueError(f'Operador ">" só pode ser usado entre ints')
-                return (left_val > right_val, 'bool')
-            elif op == '<':
-                if left_type != 'int':
-                    raise ValueError(f'Operador "<" só pode ser usado entre ints')
-                return (left_val < right_val, 'bool')
+            if op == '>':
+                if left_type == 'int' and right_type == 'int':
+                    return (left_val > right_val, 'bool')
+                elif left_type == 'string' and right_type == 'string':
+                    return (left_val > right_val, 'bool')
+                else:
+                    raise ValueError(f'Operador ">" só pode ser usado entre ints ou strings')
+            if op == '<':
+                if left_type == 'int' and right_type == 'int':
+                    return (left_val < right_val, 'bool')
+                elif left_type == 'string' and right_type == 'string':
+                    return (left_val < right_val, 'bool')
+                else:
+                    raise ValueError(f'Operador "<" só pode ser usado entre ints ou strings')
+                
         if op in ['&&', '||']:
             if left_type != 'bool' or right_type != 'bool':
                 raise ValueError(f"Operador {op} requer bool e bool")
