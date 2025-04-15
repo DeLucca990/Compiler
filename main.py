@@ -428,11 +428,11 @@ class Parser:
                 self.tokenizer.selectNext()
                 expr = self.parseBExpression()
             
-            if self.tokenizer.next.type not in (
-                'LBRACE', 'RBRACE', 'IF', 'FOR', 
-                'PRINTLN', 'IDENTIFIER', 'EOF', 'VAR'
-            ):
-                pass
+                if self.tokenizer.next.type not in (
+                    'LBRACE', 'RBRACE', 'IF', 'FOR', 
+                    'PRINTLN', 'IDENTIFIER', 'EOF', 'VAR'
+                ):
+                    raise ValueError(f"Token inesperado após expressão de atribuição: {self.tokenizer.next}")
             
             return VarDecl(var_name, var_type, expr)
         
@@ -480,12 +480,16 @@ class Parser:
             if self.tokenizer.next.type != 'LBRACE':
                 raise ValueError('Esperado { após if')
             then_block = self.parseStatement()
+            if isinstance(then_block, Block) and not then_block.children:
+                raise ValueError("Bloco do if está vazio")
             else_block = None
             if self.tokenizer.next.type == 'ELSE':
                 self.tokenizer.selectNext()
                 if self.tokenizer.next.type != 'LBRACE':
                     raise ValueError('Esperado { após else')
                 else_block = self.parseStatement()
+                if isinstance(else_block, Block) and not else_block.children:
+                    raise ValueError("Bloco do else está vazio")
             return If(condition, then_block, else_block)
         
         # Loop for
@@ -493,8 +497,10 @@ class Parser:
             self.tokenizer.selectNext()
             condition = self.parseBExpression()
             if self.tokenizer.next.type != 'LBRACE':
-                raise ValueError('Esperado { após for')
+                raise ValueError('Esperado { imediatamente após condição do for')
             block = self.parseStatement()
+            if isinstance(block, Block) and not block.children:
+                raise ValueError("Bloco do for está vazio")
             return For(NoOp(), condition, NoOp(), block)
         
         else:
