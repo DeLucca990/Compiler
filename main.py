@@ -263,7 +263,15 @@ class BinOp(Node):
             if left_type == 'int' and right_type == 'int':
                 return (left_val + right_val, 'int')
             elif left_type == 'string' or right_type == 'string':
-                return (str(left_val) + str(right_val), 'string')
+                if left_type == 'bool':
+                    left_val = 'true' if left_val else 'false'
+                else:
+                    left_val = str(left_val)
+                if right_type == 'bool':
+                    right_val = 'true' if right_val else 'false'
+                else:
+                    right_val = str(right_val)
+                return (left_val + right_val, 'string')
             else:
                 raise ValueError(f"Operador + não suportado para {left_type} e {right_type}")
         if op == '-':
