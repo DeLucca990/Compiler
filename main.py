@@ -359,6 +359,8 @@ class Println(Node):
         val, val_type = self.children[0].evaluate(symbol_table)
         if val is None:
             print("None")
+        elif val_type == 'bool':
+            print("true" if val else "false")
         else:
             print(val)
         return (val, val_type)
