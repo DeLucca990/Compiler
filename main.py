@@ -52,15 +52,34 @@ class Code:
         self.instructions.append(instr)
 
     def write(self, source_file):
-        out_file = source_file.rsplit('.',1)[0] + '.asm'
+        out_file = source_file.rsplit('.', 1)[0] + '.asm'
         with open(out_file, 'w') as f:
+            f.write("section .data\n")
+            f.write('    format_out: db "%d", 10, 0\n')
+            f.write('    format_in : db "%d", 0\n')
+            f.write("    scan_int  : dd 0\n\n")
+
             f.write("section .text\n")
+            f.write("    extern   printf\n")
+            f.write("    extern   scanf\n")
+            f.write("    global   _start\n")
             f.write("_start:\n")
+            f.write("    push ebp            ; guarda o EBP\n")
+            f.write("    mov  ebp, esp       ; zera a pilha\n")
             for instr in self.instructions:
-                f.write(f"    {instr}\n")
+                 f.write(f"    {instr}\n")
             f.write("    mov eax, 1\n")
             f.write("    mov ebx, 0\n")
             f.write("    int 0x80\n")
+            f.write("    mov  esp, ebp       ; reestabelece a pilha\n")
+            f.write("    pop  ebp\n")
+            f.write("; chamada da interrupcao de saida (Linux)\n")
+            f.write("    mov  eax, 1\n")
+            f.write("    xor  ebx, ebx\n")
+            f.write("    int  0x80\n")
+            f.write("; Para Windows:\n")
+            f.write("; push dword 0\n")
+            f.write("; call _ExitProcess@4\n")
         print(f"Gerado: {out_file}")
 
 class Tokenizer:
@@ -282,7 +301,11 @@ class Scan(Node):
             return (input_value, 'string')
     
     def generate(self, symbol_table, code):
-        code.add("; call scanf")
+        code.add("push scan_int")
+        code.add("push format_in")
+        code.add("call scanf")
+        code.add("add esp, 8")
+        code.add("mov  eax, [scan_int]")
 
 class BinOp(Node):
     def __init__(self, value, left, right):
@@ -529,6 +552,10 @@ class Println(Node):
         code.add("push eax")
         code.add("call print_int")
         code.add("add esp, 4")
+        code.add("push eax")         
+        code.add("push format_out")
+        code.add("call printf")
+        code.add("add esp, 8")
 
 class Identifier(Node):
     def __init__(self, name):

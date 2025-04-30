@@ -1,11 +1,25 @@
+section .data
+    format_out: db "%d", 10, 0
+    format_in : db "%d", 0
+    scan_int  : dd 0
+
 section .text
+    extern   printf
+    extern   scanf
+    global   _start
 _start:
+    push ebp            ; guarda o EBP
+    mov  ebp, esp       ; zera a pilha
     sub esp, 4    ; aloca i
     sub esp, 4    ; aloca n
     sub esp, 4    ; aloca f
     mov eax, 1
     mov [ebp-12], eax    ; inicializa f
-    ; call scanf
+    push scan_int
+    push format_in
+    call scanf
+    add esp, 8
+    mov  eax, [scan_int]
     mov [ebp-8], eax    ; atribui n
     mov eax, 2
     mov [ebp-4], eax    ; atribui i
@@ -45,6 +59,19 @@ _start:
     push eax
     call print_int
     add esp, 4
+    push eax
+    push format_out
+    call printf
+    add esp, 8
     mov eax, 1
     mov ebx, 0
     int 0x80
+    mov  esp, ebp       ; reestabelece a pilha
+    pop  ebp
+; chamada da interrupcao de saida (Linux)
+    mov  eax, 1
+    xor  ebx, ebx
+    int  0x80
+; Para Windows:
+; push dword 0
+; call _ExitProcess@4
