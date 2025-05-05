@@ -694,7 +694,8 @@ class Parser:
                 raise ValueError('Esperado { após if')
             then_block = self.parseStatement()
             if isinstance(then_block, Block) and not then_block.children:
-                raise ValueError("Bloco do if está vazio")
+                # raise ValueError("Bloco do if está vazio")
+                then_block = Block([NoOp()])
             else_block = None
             if self.tokenizer.next.type == 'ELSE':
                 self.tokenizer.selectNext()
