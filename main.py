@@ -19,11 +19,14 @@ class Token:
 class SymbolTable:
     def __init__(self):
         self.symbols = {}
+        self.next_offset = 0
     
     def declare(self, key, var_type):
         if key in self.symbols:
             raise ValueError(f'Variável "{key}" já declarada.')
-        self.symbols[key] = {"type": var_type, "value": None}
+        size = 4
+        self.next_offset += size
+        self.symbols[key] = {"type": var_type, "offset": -self.next_offset}
     
     def set(self, key, val, val_type):
         if key not in self.symbols:
@@ -36,7 +39,49 @@ class SymbolTable:
     def get(self, key):
         if key not in self.symbols:
             raise ValueError(f'Variável não declarada: {key}')
-        return (self.symbols[key]["value"], self.symbols[key]["type"])
+        return (self.symbols[key]["offset"], self.symbols[key]["type"])
+
+    def get_offset(self, key):
+        return self.symbols[key]["offset"]
+
+class Code:
+    def __init__(self):
+        self.instructions = []
+
+    def add(self, instr):
+        self.instructions.append(instr)
+
+    def write(self, source_file):
+        out_file = source_file.rsplit('.', 1)[0] + '.asm'
+        with open(out_file, 'w') as f:
+            f.write("section .data\n")
+            f.write('    format_out: db "%d", 10, 0 ; format do printf\n')
+            f.write('    format_in : db "%d", 0 ; format do scanf\n')
+            f.write("    scan_int  : dd 0 ; 32-bits integer\n\n")
+
+            f.write("section .text\n")
+            f.write("    extern printf ; usar _printf para Windows\n")
+            f.write("    extern scanf ; usar _scanf para Windows\n")
+            f.write("    extern _ExitProcess@4 ; usar para Windows\n")
+            f.write("    global _start ; início do programa\n")
+            f.write("_start:\n")
+            f.write("    push ebp            ; guarda o EBP\n")
+            f.write("    mov ebp, esp       ; zera a pilha\n")
+            for instr in self.instructions:
+                 f.write(f"    {instr}\n")
+            f.write("    mov eax, 1\n")
+            f.write("    mov ebx, 0\n")
+            f.write("    int 0x80\n")
+            f.write("    mov esp, ebp       ; reestabelece a pilha\n")
+            f.write("    pop ebp\n")
+            f.write("    ; chamada da interrupcao de saida (Linux)\n")
+            f.write("    mov eax, 1\n")
+            f.write("    xor ebx, ebx\n")
+            f.write("    int 0x80\n")
+            f.write("    ; Para Windows:\n")
+            f.write("    ; push dword 0\n")
+            f.write("    ; call _ExitProcess@4\n")
+        print(f"Gerado: {out_file}")
 
 class Tokenizer:
     def __init__(self, source):
@@ -162,12 +207,23 @@ class Tokenizer:
         raise ValueError(f'Caractere inválido: {current_char}')
 
 class Node:
+    id = 0
+
+    @staticmethod
+    def newId():
+        Node.id += 1
+        return Node.id
+
     def __init__(self):
         self.value = None
         self.children = []
+        self.id = Node.newId()
 
     def evaluate(self):
         pass
+
+    def generate(self, symbol_table, code):
+        raise NotImplementedError(f"Generate não implementado para {type(self)}")
 
 class If(Node):
     def __init__(self, condition, then_block, else_block=None):
@@ -186,6 +242,19 @@ class If(Node):
         elif self.else_block:
             return self.else_block.evaluate(symbol_table)
         return (None, None)
+
+    def generate(self, symbol_table, code):
+        else_lbl=f'else_{self.id}'
+        end_lbl=f'end_{self.id}' 
+        self.condition.generate(symbol_table, code)
+        code.add('cmp eax,0')
+        code.add(f'je {else_lbl}')
+        self.then_block.generate(symbol_table, code)
+        code.add(f'jmp {end_lbl}')
+        code.add(f'{else_lbl}:')
+        if self.else_block: 
+            self.else_block.generate(symbol_table, code)
+        code.add(f'{end_lbl}:')
 
 class For(Node):
     def __init__(self, init, condition, increment, block):
@@ -207,6 +276,19 @@ class For(Node):
             self.increment.evaluate(symbol_table)
         return (None, None)
 
+    def generate(self, symbol_table, code):
+        start_lbl = f'loop_{self.id}'
+        end_lbl = f'end_{self.id}'
+        #self.init.generate(symbol_table, code)
+        code.add(f'{start_lbl}:')
+        self.condition.generate(symbol_table, code)
+        code.add('cmp eax,0')
+        code.add(f'je {end_lbl}')
+        self.block.generate(symbol_table, code)
+        #self.increment.generate(symbol_table, code)
+        code.add(f'jmp {start_lbl}')
+        code.add(f'{end_lbl}:')
+
 class Scan(Node):
     def __init__(self):
         super().__init__()
@@ -218,6 +300,13 @@ class Scan(Node):
             return (val_int, 'int')
         except ValueError:
             return (input_value, 'string')
+    
+    def generate(self, symbol_table, code):
+        code.add("push scan_int")
+        code.add("push format_in")
+        code.add("call scanf")
+        code.add("add esp, 8")
+        code.add("mov eax, dword [scan_int]")
 
 class BinOp(Node):
     def __init__(self, value, left, right):
@@ -294,6 +383,60 @@ class BinOp(Node):
 
         raise ValueError(f"Operador desconhecido: {op}")
 
+    def generate(self, symbol_table, code):
+        # left -> EAX
+        self.children[0].generate(symbol_table, code)
+        code.add("push eax")
+        # right -> EAX
+        self.children[1].generate(symbol_table, code)
+        code.add("mov ecx, eax")
+        code.add("pop eax")
+        op = self.value
+        if op == '+':
+            code.add('add eax, ecx')
+        elif op == '-':
+            code.add('sub eax, ecx')
+        elif op == '*':
+            code.add('imul eax, ecx')
+        elif op == '/':
+            code.add('cdq')
+            code.add('idiv ecx')
+        elif op in ('==', '<', '>'):
+            code.add('cmp eax, ecx')
+            if op == '==':
+                code.add('sete al')
+            elif op == '<':
+                code.add('setl al')
+            else:
+                code.add('setg al')
+            code.add('movzx eax, al')
+        elif op == '&&':
+            lbl_false = f'false_{self.id}'
+            lbl_end   = f'end_{self.id}'
+            code.add('cmp eax, 0')
+            code.add(f'je {lbl_false}')
+            code.add('cmp ecx, 0')
+            code.add(f'je {lbl_false}')
+            code.add('mov eax, 1')
+            code.add(f'jmp {lbl_end}')
+            code.add(f'{lbl_false}:')
+            code.add('mov eax, 0')
+            code.add(f'{lbl_end}:')
+        elif op == '||':
+            lbl_true = f'true_{self.id}'
+            lbl_end  = f'end_{self.id}'
+            code.add('cmp eax, 0')
+            code.add(f'jne {lbl_true}')
+            code.add('cmp ecx, 0')
+            code.add(f'jne {lbl_true}')
+            code.add('mov eax, 0')
+            code.add(f'jmp {lbl_end}')
+            code.add(f'{lbl_true}:')
+            code.add('mov eax, 1')
+            code.add(f'{lbl_end}:')
+        else:
+            raise ValueError(f"Operador desconhecido: {op}")
+
 class UnOp(Node):
     def __init__(self, value, child):
         super().__init__()
@@ -317,6 +460,20 @@ class UnOp(Node):
             return (not child_val, 'bool')
         else:
             raise ValueError(f"Operador unário desconhecido: {op}")
+    
+    def generate(self, symbol_table, code):
+        self.children[0].generate(symbol_table, code)
+        op = self.value
+        if op == '+':
+            pass
+        elif op == '-':
+            code.add("neg eax")
+        elif op == '!':
+            code.add("cmp eax, 0")
+            code.add("sete al")
+            code.add("movzx eax, al")
+        else:
+            raise ValueError(f"Operador unário desconhecido: {op}")
 
 class IntVal(Node):
     def __init__(self, value):
@@ -326,6 +483,9 @@ class IntVal(Node):
     def evaluate(self, symbol_table):
         return (self.value, 'int')
 
+    def generate(self, symbol_table, code):
+        code.add(f"mov eax, {self.value}")
+
 class StrVal(Node):
     def __init__(self, value):
         super().__init__()
@@ -333,6 +493,9 @@ class StrVal(Node):
 
     def evaluate(self, symbol_table):
         return (self.value, 'string')
+    
+    def generate(self, symbol_table, code): 
+        code.add(f"; carregar string '{self.value}' em eax")
 
 class BoolVal(Node):
     def __init__(self, value):
@@ -342,12 +505,21 @@ class BoolVal(Node):
     def evaluate(self, symbol_table):
         return (self.value, 'bool')
 
+    def generate(self, symbol_table, code):
+        if self.value:
+            code.add("mov eax, 1")
+        else:
+            code.add("mov eax, 0")
+
 class NoOp(Node):
     def __init__(self):
         super().__init__()
 
     def evaluate(self, symbol_table):
         return (None, None)
+
+    def generate(self, symbol_table, code):
+        pass
 
 class Block(Node):
     def __init__(self, statements):
@@ -358,6 +530,10 @@ class Block(Node):
         for statement in self.children:
             ret = statement.evaluate(symbol_table)
         return ret
+
+    def generate(self, symbol_table, code):
+        for statement in self.children:
+            statement.generate(symbol_table, code)
 
 class Println(Node):
     def __init__(self, expression):
@@ -373,6 +549,15 @@ class Println(Node):
             print(val)
         return (val, val_type)
 
+    def generate(self, symbol_table, code):
+        self.children[0].generate(symbol_table, code)
+        code.add("push eax")
+        code.add("add esp, 4")
+        code.add("push eax")         
+        code.add("push format_out")
+        code.add("call printf")
+        code.add("add esp, 8")
+
 class Identifier(Node):
     def __init__(self, name):
         super().__init__()
@@ -380,6 +565,10 @@ class Identifier(Node):
     
     def evaluate(self, symbol_table):
         return symbol_table.get(self.value)
+    
+    def generate(self, symbol_table, code):
+        off=symbol_table.get_offset(self.value)
+        code.add(f'mov eax,[ebp{off:+}]')
 
 class Assignment(Node):
     def __init__(self, identifier, expression):
@@ -391,6 +580,12 @@ class Assignment(Node):
         var_name = self.children[0].value
         symbol_table.set(var_name, expr_val, expr_type)
         return (expr_val, expr_type)
+    
+
+    def generate(self, symbol_table, code):
+        self.children[1].generate(symbol_table, code)         
+        off = symbol_table.get_offset(self.children[0].value)
+        code.add(f"mov [ebp{off:+}], eax    ; atribui {self.children[0].value}")
 
 class VarDecl(Node):
     def __init__(self, identifier, var_type, expression=None):
@@ -408,6 +603,14 @@ class VarDecl(Node):
             symbol_table.set(self.identifier, val, val_type)
             return (val, val_type)
         return (None, None)
+    
+    def generate(self, symbol_table, code):
+        symbol_table.declare(self.identifier, self.var_type)
+        code.add(f"sub esp, 4    ; aloca {self.identifier}")
+        if self.expression:
+            self.expression.generate(symbol_table, code)
+            offset = symbol_table.get_offset(self.identifier)
+            code.add(f"mov [ebp{offset:+}], eax    ; inicializa {self.identifier}")
 
 class Parser:
     def __init__(self, tokenizer):
@@ -640,9 +843,12 @@ def main(file):
 
         symbol_table = SymbolTable()
 
-        result = ast.evaluate(symbol_table)
+        code = Code()
+        ast.generate(symbol_table, code)
+        code.write(file)
 
-        return result
+        # result = ast.evaluate(symbol_table)
+        # return result
     except FileNotFoundError:
         print(f"Erro: Arquivo '{file}' não encontrado.")
         sys.exit(1)
