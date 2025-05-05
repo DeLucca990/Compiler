@@ -55,31 +55,32 @@ class Code:
         out_file = source_file.rsplit('.', 1)[0] + '.asm'
         with open(out_file, 'w') as f:
             f.write("section .data\n")
-            f.write('    format_out: db "%d", 10, 0\n')
-            f.write('    format_in : db "%d", 0\n')
-            f.write("    scan_int  : dd 0\n\n")
+            f.write('    format_out: db "%d", 10, 0 ; format do printf\n')
+            f.write('    format_in : db "%d", 0 ; format do scanf\n')
+            f.write("    scan_int  : dd 0 ; 32-bits integer\n\n")
 
             f.write("section .text\n")
-            f.write("    extern   printf\n")
-            f.write("    extern   scanf\n")
-            f.write("    global   _start\n")
+            f.write("    extern printf ; usar _printf para Windows\n")
+            f.write("    extern scanf ; usar _scanf para Windows\n")
+            f.write("    extern _ExitProcess@4 ; usar para Windows\n")
+            f.write("    global _start ; início do programa\n")
             f.write("_start:\n")
             f.write("    push ebp            ; guarda o EBP\n")
-            f.write("    mov  ebp, esp       ; zera a pilha\n")
+            f.write("    mov ebp, esp       ; zera a pilha\n")
             for instr in self.instructions:
                  f.write(f"    {instr}\n")
             f.write("    mov eax, 1\n")
             f.write("    mov ebx, 0\n")
             f.write("    int 0x80\n")
-            f.write("    mov  esp, ebp       ; reestabelece a pilha\n")
-            f.write("    pop  ebp\n")
-            f.write("; chamada da interrupcao de saida (Linux)\n")
-            f.write("    mov  eax, 1\n")
-            f.write("    xor  ebx, ebx\n")
-            f.write("    int  0x80\n")
-            f.write("; Para Windows:\n")
-            f.write("; push dword 0\n")
-            f.write("; call _ExitProcess@4\n")
+            f.write("    mov esp, ebp       ; reestabelece a pilha\n")
+            f.write("    pop ebp\n")
+            f.write("    ; chamada da interrupcao de saida (Linux)\n")
+            f.write("    mov eax, 1\n")
+            f.write("    xor ebx, ebx\n")
+            f.write("    int 0x80\n")
+            f.write("    ; Para Windows:\n")
+            f.write("    ; push dword 0\n")
+            f.write("    ; call _ExitProcess@4\n")
         print(f"Gerado: {out_file}")
 
 class Tokenizer:
@@ -243,8 +244,8 @@ class If(Node):
         return (None, None)
 
     def generate(self, symbol_table, code):
-        end_lbl=f'end_{self.id}' 
         else_lbl=f'else_{self.id}'
+        end_lbl=f'end_{self.id}' 
         self.condition.generate(symbol_table, code)
         code.add('cmp eax,0')
         code.add(f'je {else_lbl}')
@@ -276,15 +277,15 @@ class For(Node):
         return (None, None)
 
     def generate(self, symbol_table, code):
-        start_lbl = f'start_{self.id}'
+        start_lbl = f'loop_{self.id}'
         end_lbl = f'end_{self.id}'
-        self.init.generate(symbol_table, code)
+        #self.init.generate(symbol_table, code)
         code.add(f'{start_lbl}:')
         self.condition.generate(symbol_table, code)
         code.add('cmp eax,0')
         code.add(f'je {end_lbl}')
         self.block.generate(symbol_table, code)
-        self.increment.generate(symbol_table, code)
+        #self.increment.generate(symbol_table, code)
         code.add(f'jmp {start_lbl}')
         code.add(f'{end_lbl}:')
 
@@ -305,7 +306,7 @@ class Scan(Node):
         code.add("push format_in")
         code.add("call scanf")
         code.add("add esp, 8")
-        code.add("mov  eax, [scan_int]")
+        code.add("mov eax, dword [scan_int]")
 
 class BinOp(Node):
     def __init__(self, value, left, right):
@@ -385,53 +386,54 @@ class BinOp(Node):
     def generate(self, symbol_table, code):
         # left -> EAX
         self.children[0].generate(symbol_table, code)
-        code.add("push eax    ; salva L")
+        code.add("push eax")
         # right -> EAX
         self.children[1].generate(symbol_table, code)
-        code.add("mov ecx, eax    ; R em ECX")
-        code.add("pop eax        ; L em EAX")
+        code.add("mov ecx, eax")
+        code.add("pop eax")
         op = self.value
         if op == '+':
-            code.add("add eax, ecx")
+            code.add('add eax, ecx')
         elif op == '-':
-            code.add("sub eax, ecx")
+            code.add('sub eax, ecx')
         elif op == '*':
-            code.add("imul eax, ecx")
+            code.add('imul eax, ecx')
         elif op == '/':
-            code.add("xor edx, edx")
-            code.add("idiv ecx")
-        elif op == '==':
-            code.add("cmp eax, ecx")
-            code.add("sete al")
-            code.add("movzx eax, al")
-        elif op == '<':
-            code.add("cmp eax, ecx")
-            code.add("setl al")
-            code.add("movzx eax, al")
-        elif op == '>':
-            code.add("cmp eax, ecx")
-            code.add("setg al")
-            code.add("movzx eax, al")
+            code.add('cdq')
+            code.add('idiv ecx')
+        elif op in ('==', '<', '>'):
+            code.add('cmp eax, ecx')
+            if op == '==':
+                code.add('sete al')
+            elif op == '<':
+                code.add('setl al')
+            else:
+                code.add('setg al')
+            code.add('movzx eax, al')
         elif op == '&&':
-            code.add("cmp eax, 0")
-            code.add("je false")
-            code.add("cmp ecx, 0")
-            code.add("je false")
-            code.add("mov eax, 1")
-            code.add("jmp end")
-            code.add("false:")
-            code.add("mov eax, 0")
-            code.add("end:")
+            lbl_false = f'false_{self.id}'
+            lbl_end   = f'end_{self.id}'
+            code.add('cmp eax, 0')
+            code.add(f'je {lbl_false}')
+            code.add('cmp ecx, 0')
+            code.add(f'je {lbl_false}')
+            code.add('mov eax, 1')
+            code.add(f'jmp {lbl_end}')
+            code.add(f'{lbl_false}:')
+            code.add('mov eax, 0')
+            code.add(f'{lbl_end}:')
         elif op == '||':
-            code.add("cmp eax, 0")
-            code.add("jne true")
-            code.add("cmp ecx, 0")
-            code.add("jne true")
-            code.add("mov eax, 0")
-            code.add("jmp end")
-            code.add("true:")
-            code.add("mov eax, 1")
-            code.add("end:")
+            lbl_true = f'true_{self.id}'
+            lbl_end  = f'end_{self.id}'
+            code.add('cmp eax, 0')
+            code.add(f'jne {lbl_true}')
+            code.add('cmp ecx, 0')
+            code.add(f'jne {lbl_true}')
+            code.add('mov eax, 0')
+            code.add(f'jmp {lbl_end}')
+            code.add(f'{lbl_true}:')
+            code.add('mov eax, 1')
+            code.add(f'{lbl_end}:')
         else:
             raise ValueError(f"Operador desconhecido: {op}")
 
@@ -550,7 +552,6 @@ class Println(Node):
     def generate(self, symbol_table, code):
         self.children[0].generate(symbol_table, code)
         code.add("push eax")
-        code.add("call print_int")
         code.add("add esp, 4")
         code.add("push eax")         
         code.add("push format_out")
@@ -566,7 +567,8 @@ class Identifier(Node):
         return symbol_table.get(self.value)
     
     def generate(self, symbol_table, code):
-        off,_=symbol_table.get(self.value); code.add(f'mov eax,[ebp{off:+}]')
+        off=symbol_table.get_offset(self.value)
+        code.add(f'mov eax,[ebp{off:+}]')
 
 class Assignment(Node):
     def __init__(self, identifier, expression):
@@ -582,8 +584,8 @@ class Assignment(Node):
 
     def generate(self, symbol_table, code):
         self.children[1].generate(symbol_table, code)         
-        offset, _ = symbol_table.get(self.children[0].value)
-        code.add(f"mov [ebp{offset:+}], eax    ; atribui {self.children[0].value}")
+        off = symbol_table.get_offset(self.children[0].value)
+        code.add(f"mov [ebp{off:+}], eax    ; atribui {self.children[0].value}")
 
 class VarDecl(Node):
     def __init__(self, identifier, var_type, expression=None):
