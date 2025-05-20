@@ -1,13 +1,22 @@
-
 {
-	var i int
-	var n int
-	var f int = 1
-	n = Scan()
-	i = 2
-	for i < n + 1 {
-	f = f * i
-	i = i + 1
-	}
-	Println(f)
+  var b int = 5
+  
+  func soma(x int, y int) int {
+    var a int
+    a = x + y
+    Println(a)
+    return a
   }
+  
+  func main() {
+    var a int
+    {
+      var b int
+      a = 3
+      b = soma(a, 4)
+      Println(b)
+    }
+    Println(a)
+    Println(b)
+  }
+}

@@ -1,865 +1,753 @@
 import sys
 import re
+from typing import List, Tuple, Optional, Dict, Any
 
 class PrePro:
     @staticmethod
-    def filter(code):
-        code = re.sub(r'\/\/.*', '', code)
-        code = re.sub(r'\/\*[\s\S]*?\*\/', '', code)
+    def filter(code: str) -> str:
+        code = re.sub(r"//.*", "", code)
+        code = re.sub(r"/\*[\s\S]*?\*/", "", code)
         return code
 
 class Token:
-    def __init__(self, type, value):
-        self.type = type
+    def __init__(self, type_: str, value: str):
+        self.type = type_
         self.value = value
-    
-    def __str__(self):
+
+    def __repr__(self):
         return f"Token({self.type}, {self.value})"
 
-class SymbolTable:
-    def __init__(self):
-        self.symbols = {}
-        self.next_offset = 0
-    
-    def declare(self, key, var_type):
-        if key in self.symbols:
-            raise ValueError(f'Variável "{key}" já declarada.')
-        size = 4
-        self.next_offset += size
-        self.symbols[key] = {"type": var_type, "offset": -self.next_offset}
-    
-    def set(self, key, val, val_type):
-        if key not in self.symbols:
-            raise ValueError(f'Variável não declarada: {key}')
-        expected_type = self.symbols[key]["type"]
-        if expected_type != val_type:
-            raise ValueError(f'Tentando atribuir {val_type} em variável do tipo {expected_type}')
-        self.symbols[key]["value"] = val
-    
-    def get(self, key):
-        if key not in self.symbols:
-            raise ValueError(f'Variável não declarada: {key}')
-        return (self.symbols[key]["offset"], self.symbols[key]["type"])
-
-    def get_offset(self, key):
-        return self.symbols[key]["offset"]
-
-class Code:
-    def __init__(self):
-        self.instructions = []
-
-    def add(self, instr):
-        self.instructions.append(instr)
-
-    def write(self, source_file):
-        out_file = source_file.rsplit('.', 1)[0] + '.asm'
-        with open(out_file, 'w') as f:
-            f.write("section .data\n")
-            f.write('    format_out: db "%d", 10, 0 ; format do printf\n')
-            f.write('    format_in : db "%d", 0 ; format do scanf\n')
-            f.write("    scan_int  : dd 0 ; 32-bits integer\n\n")
-
-            f.write("section .text\n")
-            f.write("    extern printf ; usar _printf para Windows\n")
-            f.write("    extern scanf ; usar _scanf para Windows\n")
-            f.write("    extern _ExitProcess@4 ; usar para Windows\n")
-            f.write("    global _start ; início do programa\n")
-            f.write("_start:\n")
-            f.write("    push ebp            ; guarda o EBP\n")
-            f.write("    mov ebp, esp       ; zera a pilha\n")
-            for instr in self.instructions:
-                 f.write(f"    {instr}\n")
-            f.write("    mov eax, 1\n")
-            f.write("    mov ebx, 0\n")
-            f.write("    int 0x80\n")
-            f.write("    mov esp, ebp       ; reestabelece a pilha\n")
-            f.write("    pop ebp\n")
-            f.write("    ; chamada da interrupcao de saida (Linux)\n")
-            f.write("    mov eax, 1\n")
-            f.write("    xor ebx, ebx\n")
-            f.write("    int 0x80\n")
-            f.write("    ; Para Windows:\n")
-            f.write("    ; push dword 0\n")
-            f.write("    ; call _ExitProcess@4\n")
-        print(f"Gerado: {out_file}")
-
 class Tokenizer:
-    def __init__(self, source):
+    KEYWORDS = {
+        "Println": "PRINTLN",
+        "Scan": "SCAN",
+        "if": "IF",
+        "else": "ELSE",
+        "for": "FOR",
+        "var": "VAR",
+        "int": "INT_TYPE",
+        "bool": "BOOL_TYPE",
+        "string": "STRING_TYPE",
+        "func": "FUNC",
+        "return": "RETURN",
+    }
+
+    SIMPLE_TOKENS = {
+        "+": "PLUS",
+        "-": "MINUS",
+        "*": "MULTIPLY",
+        "/": "DIVIDE",
+        "(": "LPAREN",
+        ")": "RPAREN",
+        "{": "LBRACE",
+        "}": "RBRACE",
+        ",": "COMMA",
+    }
+
+    def __init__(self, source: str):
         self.source = source
         self.position = 0
-        self.next = None
-        self.keywords = {
-            "Println": "PRINTLN",
-            "if": "IF",
-            "else": "ELSE",
-            "for": "FOR",
-            "Scan": "SCAN",
-            "var": "VAR",    
-            "int": "INT_TYPE",
-            "bool": "BOOL_TYPE",
-            "string": "STRING_TYPE",
-        }
+        self.next: Token = None 
+        self.select_next()
 
-    def selectNext(self):
-        while self.position < len(self.source) and self.source[self.position].isspace():
+    def _advance_while(self, predicate):
+        while self.position < len(self.source) and predicate(self.source[self.position]):
             self.position += 1
-        
+
+    def select_next(self):
+        self._advance_while(str.isspace)
         if self.position >= len(self.source):
-            self.next = Token('EOF', None)
+            self.next = Token("EOF", None)
             return
-        
-        current_char = self.source[self.position]
 
-        if current_char == '"':
-            start = self.position + 1
+        ch = self.source[self.position]
+
+        if ch == '"':
             self.position += 1
-            string_content = []
+            start = self.position
             while self.position < len(self.source) and self.source[self.position] != '"':
-                string_content.append(self.source[self.position])
                 self.position += 1
             if self.position >= len(self.source):
                 raise ValueError("String não fechada com aspas")
+            string_val = self.source[start:self.position]
             self.position += 1
-            self.next = Token('STRING', "".join(string_content))
+            self.next = Token("STRING", string_val)
             return
 
-        if current_char.isdigit():
+        if ch.isdigit():
             start = self.position
-            while self.position < len(self.source) and self.source[self.position].isdigit():
-                self.position += 1
-            number_str = self.source[start:self.position]
-            self.next = Token('NUMBER', int(number_str))
+            self._advance_while(str.isdigit)
+            num_str = self.source[start:self.position]
+            self.next = Token("NUMBER", int(num_str))
             return
-        
-        if current_char.isalpha():
+
+        if ch.isalpha() or ch == '_':
             start = self.position
-            while (self.position < len(self.source)
-                   and (self.source[self.position].isalnum() or self.source[self.position] == '_')):
-                self.position += 1
-            identifier = self.source[start:self.position]
-            if identifier in self.keywords:
-                self.next = Token(self.keywords[identifier], None)
+            self._advance_while(lambda c: c.isalnum() or c == '_')
+            ident = self.source[start:self.position]
+            if ident in self.KEYWORDS:
+                self.next = Token(self.KEYWORDS[ident], None)
             else:
-                self.next = Token('IDENTIFIER', identifier)
+                self.next = Token("IDENTIFIER", ident)
             return
-        
-        if current_char == '+':
-            self.position += 1
-            self.next = Token('PLUS', None)
-            return
-        if current_char == '-':
-            self.position += 1
-            self.next = Token('MINUS', None)
-            return
-        if current_char == '*':
-            self.position += 1
-            self.next = Token('MULTIPLY', None)
-            return
-        if current_char == '/':
-            self.position += 1
-            self.next = Token('DIVIDE', None)
-            return
-        if current_char == '(':
-            self.position += 1
-            self.next = Token('LPAREN', None)
-            return
-        if current_char == ')':
-            self.position += 1
-            self.next = Token('RPAREN', None)
-            return
-        if current_char == '{':
-            self.position += 1
-            self.next = Token('LBRACE', None)
-            return
-        if current_char == '}':
-            self.position += 1
-            self.next = Token('RBRACE', None)
-            return
-        if current_char == '=':
-            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '=':
-                self.position += 2
-                self.next = Token('EQUALS', None)
-            else:
-                self.position += 1
-                self.next = Token('ASSIGN', None)
-            return
-        if current_char == '>':
-            self.position += 1
-            self.next = Token('GREATER', None)
-            return
-        if current_char == '<':
-            self.position += 1
-            self.next = Token('LESS', None)
-            return
-        if current_char == '&' and (self.position + 1 < len(self.source) and self.source[self.position+1] == '&'):
+
+        if ch == '=' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '=':
             self.position += 2
-            self.next = Token('AND', None)
+            self.next = Token("EQUALS", None)
             return
-        if current_char == '|' and (self.position + 1 < len(self.source) and self.source[self.position+1] == '|'):
+        if ch == '&' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '&':
             self.position += 2
-            self.next = Token('OR', None)
+            self.next = Token("AND", None)
             return
-        if current_char == '!':
+        if ch == '|' and self.position + 1 < len(self.source) and self.source[self.position + 1] == '|':
+            self.position += 2
+            self.next = Token("OR", None)
+            return
+
+        if ch in self.SIMPLE_TOKENS:
             self.position += 1
-            self.next = Token('NOT', None)
+            self.next = Token(self.SIMPLE_TOKENS[ch], None)
             return
-        
-        raise ValueError(f'Caractere inválido: {current_char}')
+
+        if ch == '=':
+            self.position += 1
+            self.next = Token("ASSIGN", None)
+            return
+        if ch == '>':
+            self.position += 1
+            self.next = Token("GREATER", None)
+            return
+        if ch == '<':
+            self.position += 1
+            self.next = Token("LESS", None)
+            return
+        if ch == '!':
+            self.position += 1
+            self.next = Token("NOT", None)
+            return
+
+        raise ValueError(f"Caractere inválido: {ch}")
+
+class SymbolEntry:
+    def __init__(self, type_: str, value: Any = None, is_function: bool = False, ret_type: str = None):
+        self.type = type_
+        self.value = value
+        self.is_function = is_function
+        self.ret_type = ret_type
+
+    def __repr__(self):
+        return f"<SymbolEntry type={self.type} value={self.value} is_func={self.is_function}>"
+
+class SymbolTable:
+    def __init__(self, parent: Optional["SymbolTable"] = None):
+        self.symbols: Dict[str, SymbolEntry] = {}
+        self.parent = parent
+
+    def declare(self, key: str, entry: SymbolEntry):
+        if key in self.symbols:
+            raise ValueError(f'Variável/funcção "{key}" já declarada neste escopo.')
+        self.symbols[key] = entry
+
+    def get_entry(self, key: str) -> SymbolEntry:
+        if key in self.symbols:
+            return self.symbols[key]
+        if self.parent is not None:
+            return self.parent.get_entry(key)
+        raise ValueError(f'Variável não declarada: {key}')
+
+    def get(self, key: str) -> Tuple[Any, str]:
+        entry = self.get_entry(key)
+        return entry.value, entry.type
+
+    def set(self, key: str, value: Any, value_type: str):
+        if key in self.symbols:
+            entry = self.symbols[key]
+        elif self.parent is not None:
+            self.parent.set(key, value, value_type)
+            return
+        else:
+            raise ValueError(f'Variável não declarada: {key}')
+
+        if entry.is_function:
+            raise ValueError(f'"{key}" é uma função, não pode receber atribuição')
+        if entry.type != value_type:
+            raise ValueError(f'Tentando atribuir {value_type} em variável do tipo {entry.type}')
+        entry.value = value
+
+class ReturnSignal(Exception):
+    def __init__(self, value, value_type):
+        super().__init__("return")
+        self.value = value
+        self.value_type = value_type
 
 class Node:
-    id = 0
-
-    @staticmethod
-    def newId():
-        Node.id += 1
-        return Node.id
-
-    def __init__(self):
-        self.value = None
-        self.children = []
-        self.id = Node.newId()
-
-    def evaluate(self):
-        pass
-
-    def generate(self, symbol_table, code):
-        raise NotImplementedError(f"Generate não implementado para {type(self)}")
-
-class If(Node):
-    def __init__(self, condition, then_block, else_block=None):
-        super().__init__()
-        self.condition = condition
-        self.then_block = then_block
-        self.else_block = else_block
-
-    def evaluate(self, symbol_table):
-        cond_val, cond_type = self.condition.evaluate(symbol_table)
-        if cond_type != 'bool':
-            raise ValueError("Condição do if deve ser bool")
-        
-        if cond_val:
-            return self.then_block.evaluate(symbol_table)
-        elif self.else_block:
-            return self.else_block.evaluate(symbol_table)
-        return (None, None)
-
-    def generate(self, symbol_table, code):
-        else_lbl=f'else_{self.id}'
-        end_lbl=f'end_{self.id}' 
-        self.condition.generate(symbol_table, code)
-        code.add('cmp eax,0')
-        code.add(f'je {else_lbl}')
-        self.then_block.generate(symbol_table, code)
-        code.add(f'jmp {end_lbl}')
-        code.add(f'{else_lbl}:')
-        if self.else_block: 
-            self.else_block.generate(symbol_table, code)
-        code.add(f'{end_lbl}:')
-
-class For(Node):
-    def __init__(self, init, condition, increment, block):
-        super().__init__()
-        self.init = init
-        self.condition = condition
-        self.increment = increment
-        self.block = block
-
-    def evaluate(self, symbol_table):
-        self.init.evaluate(symbol_table)
-        while True:
-            cond_val, cond_type = self.condition.evaluate(symbol_table)
-            if cond_type != 'bool':
-                raise ValueError("Condição do for deve ser bool")
-            if not cond_val:
-                break
-            self.block.evaluate(symbol_table)
-            self.increment.evaluate(symbol_table)
-        return (None, None)
-
-    def generate(self, symbol_table, code):
-        start_lbl = f'loop_{self.id}'
-        end_lbl = f'end_{self.id}'
-        #self.init.generate(symbol_table, code)
-        code.add(f'{start_lbl}:')
-        self.condition.generate(symbol_table, code)
-        code.add('cmp eax,0')
-        code.add(f'je {end_lbl}')
-        self.block.generate(symbol_table, code)
-        #self.increment.generate(symbol_table, code)
-        code.add(f'jmp {start_lbl}')
-        code.add(f'{end_lbl}:')
-
-class Scan(Node):
-    def __init__(self):
-        super().__init__()
-        
-    def evaluate(self, symbol_table):
-        input_value = input().strip()
-        try:
-            val_int = int(input_value)
-            return (val_int, 'int')
-        except ValueError:
-            return (input_value, 'string')
-    
-    def generate(self, symbol_table, code):
-        code.add("push scan_int")
-        code.add("push format_in")
-        code.add("call scanf")
-        code.add("add esp, 8")
-        code.add("mov eax, dword [scan_int]")
-
-class BinOp(Node):
-    def __init__(self, value, left, right):
-        super().__init__()
-        self.value = value
-        self.children = [left, right]
-
-    def evaluate(self, symbol_table):
-        left_val, left_type = self.children[0].evaluate(symbol_table)
-        right_val, right_type = self.children[1].evaluate(symbol_table)
-
-        op = self.value
-
-        if op in ['==', '>', '<']:
-            if left_type != right_type:
-                raise ValueError(f"Não é possível comparar tipos diferentes: {left_type} e {right_type}")
-            
-            if op == '==':
-                return (left_val == right_val, 'bool')
-            if op == '>':
-                if left_type == 'int' and right_type == 'int':
-                    return (left_val > right_val, 'bool')
-                elif left_type == 'string' and right_type == 'string':
-                    return (left_val > right_val, 'bool')
-                else:
-                    raise ValueError(f'Operador ">" só pode ser usado entre ints ou strings')
-            if op == '<':
-                if left_type == 'int' and right_type == 'int':
-                    return (left_val < right_val, 'bool')
-                elif left_type == 'string' and right_type == 'string':
-                    return (left_val < right_val, 'bool')
-                else:
-                    raise ValueError(f'Operador "<" só pode ser usado entre ints ou strings')
-                
-        if op in ['&&', '||']:
-            if left_type != 'bool' or right_type != 'bool':
-                raise ValueError(f"Operador {op} requer bool e bool")
-            if op == '&&':
-                return (left_val and right_val, 'bool')
-            else: 
-                return (left_val or right_val, 'bool')
-        if op == '+':
-            if left_type == 'int' and right_type == 'int':
-                return (left_val + right_val, 'int')
-            elif left_type == 'string' or right_type == 'string':
-                if left_type == 'bool':
-                    left_val = 'true' if left_val else 'false'
-                else:
-                    left_val = str(left_val)
-                if right_type == 'bool':
-                    right_val = 'true' if right_val else 'false'
-                else:
-                    right_val = str(right_val)
-                return (left_val + right_val, 'string')
-            else:
-                raise ValueError(f"Operador + não suportado para {left_type} e {right_type}")
-        if op == '-':
-            if left_type == 'int' and right_type == 'int':
-                return (left_val - right_val, 'int')
-            else:
-                raise ValueError(f"Operador - não suportado para {left_type} e {right_type}")
-        if op == '*':
-            if left_type == 'int' and right_type == 'int':
-                return (left_val * right_val, 'int')
-            else:
-                raise ValueError(f"Operador * não suportado para {left_type} e {right_type}")
-        if op == '/':
-            if left_type == 'int' and right_type == 'int':
-                if right_val == 0:
-                    raise ValueError('Divisão por zero')
-                return (left_val // right_val, 'int')
-            else:
-                raise ValueError(f"Operador / não suportado para {left_type} e {right_type}")
-
-        raise ValueError(f"Operador desconhecido: {op}")
-
-    def generate(self, symbol_table, code):
-        # left -> EAX
-        self.children[0].generate(symbol_table, code)
-        code.add("push eax")
-        # right -> EAX
-        self.children[1].generate(symbol_table, code)
-        code.add("mov ecx, eax")
-        code.add("pop eax")
-        op = self.value
-        if op == '+':
-            code.add('add eax, ecx')
-        elif op == '-':
-            code.add('sub eax, ecx')
-        elif op == '*':
-            code.add('imul eax, ecx')
-        elif op == '/':
-            code.add('cdq')
-            code.add('idiv ecx')
-        elif op in ('==', '<', '>'):
-            code.add('cmp eax, ecx')
-            if op == '==':
-                code.add('sete al')
-            elif op == '<':
-                code.add('setl al')
-            else:
-                code.add('setg al')
-            code.add('movzx eax, al')
-        elif op == '&&':
-            lbl_false = f'false_{self.id}'
-            lbl_end   = f'end_{self.id}'
-            code.add('cmp eax, 0')
-            code.add(f'je {lbl_false}')
-            code.add('cmp ecx, 0')
-            code.add(f'je {lbl_false}')
-            code.add('mov eax, 1')
-            code.add(f'jmp {lbl_end}')
-            code.add(f'{lbl_false}:')
-            code.add('mov eax, 0')
-            code.add(f'{lbl_end}:')
-        elif op == '||':
-            lbl_true = f'true_{self.id}'
-            lbl_end  = f'end_{self.id}'
-            code.add('cmp eax, 0')
-            code.add(f'jne {lbl_true}')
-            code.add('cmp ecx, 0')
-            code.add(f'jne {lbl_true}')
-            code.add('mov eax, 0')
-            code.add(f'jmp {lbl_end}')
-            code.add(f'{lbl_true}:')
-            code.add('mov eax, 1')
-            code.add(f'{lbl_end}:')
-        else:
-            raise ValueError(f"Operador desconhecido: {op}")
-
-class UnOp(Node):
-    def __init__(self, value, child):
-        super().__init__()
-        self.value = value
-        self.children = [child]
-
-    def evaluate(self, symbol_table):
-        child_val, child_type = self.children[0].evaluate(symbol_table)
-        op = self.value
-        if op == '+':
-            if child_type != 'int':
-                raise ValueError(f"Operador unário + não aplicável em {child_type}")
-            return (child_val, 'int')
-        elif op == '-':
-            if child_type != 'int':
-                raise ValueError(f"Operador unário - não aplicável em {child_type}")
-            return (-child_val, 'int')
-        elif op == '!':
-            if child_type != 'bool':
-                raise ValueError(f"Operador ! requer bool")
-            return (not child_val, 'bool')
-        else:
-            raise ValueError(f"Operador unário desconhecido: {op}")
-    
-    def generate(self, symbol_table, code):
-        self.children[0].generate(symbol_table, code)
-        op = self.value
-        if op == '+':
-            pass
-        elif op == '-':
-            code.add("neg eax")
-        elif op == '!':
-            code.add("cmp eax, 0")
-            code.add("sete al")
-            code.add("movzx eax, al")
-        else:
-            raise ValueError(f"Operador unário desconhecido: {op}")
-
-class IntVal(Node):
-    def __init__(self, value):
-        super().__init__()
-        self.value = value
-
-    def evaluate(self, symbol_table):
-        return (self.value, 'int')
-
-    def generate(self, symbol_table, code):
-        code.add(f"mov eax, {self.value}")
-
-class StrVal(Node):
-    def __init__(self, value):
-        super().__init__()
-        self.value = value
-
-    def evaluate(self, symbol_table):
-        return (self.value, 'string')
-    
-    def generate(self, symbol_table, code): 
-        code.add(f"; carregar string '{self.value}' em eax")
-
-class BoolVal(Node):
-    def __init__(self, value):
-        super().__init__()
-        self.value = value
-
-    def evaluate(self, symbol_table):
-        return (self.value, 'bool')
-
-    def generate(self, symbol_table, code):
-        if self.value:
-            code.add("mov eax, 1")
-        else:
-            code.add("mov eax, 0")
+    def evaluate(self, st: SymbolTable):
+        raise NotImplementedError
 
 class NoOp(Node):
-    def __init__(self):
-        super().__init__()
+    def evaluate(self, st):
+        return None, None
 
-    def evaluate(self, symbol_table):
-        return (None, None)
+class IntVal(Node):
+    def __init__(self, value: int):
+        self.value = value
 
-    def generate(self, symbol_table, code):
-        pass
+    def evaluate(self, st):
+        return self.value, "int"
 
-class Block(Node):
-    def __init__(self, statements):
-        self.children = statements
-    
-    def evaluate(self, symbol_table):
-        ret = (None, None)
-        for statement in self.children:
-            ret = statement.evaluate(symbol_table)
-        return ret
+class StrVal(Node):
+    def __init__(self, value: str):
+        self.value = value
+
+    def evaluate(self, st):
+        return self.value, "string"
+
+class BoolVal(Node):
+    def __init__(self, value: bool):
+        self.value = value
+
+    def evaluate(self, st):
+        return self.value, "bool"
+
+class Identifier(Node):
+    def __init__(self, name: str):
+        self.name = name
+
+    def evaluate(self, st):
+        return st.get(self.name)
 
     def generate(self, symbol_table, code):
         for statement in self.children:
             statement.generate(symbol_table, code)
 
 class Println(Node):
-    def __init__(self, expression):
-        self.children = [expression]
-    
-    def evaluate(self, symbol_table):
-        val, val_type = self.children[0].evaluate(symbol_table)
-        if val is None:
-            print("None")
-        elif val_type == 'bool':
+    def __init__(self, expr: Node):
+        self.expr = expr
+
+    def evaluate(self, st):
+        val, typ = self.expr.evaluate(st)
+        if typ == "bool":
             print("true" if val else "false")
         else:
             print(val)
-        return (val, val_type)
+        return val, typ
 
-    def generate(self, symbol_table, code):
-        self.children[0].generate(symbol_table, code)
-        code.add("push eax")
-        code.add("add esp, 4")
-        code.add("push eax")         
-        code.add("push format_out")
-        code.add("call printf")
-        code.add("add esp, 8")
+class Scan(Node):
+    def evaluate(self, st):
+        user_in = input().strip()
+        try:
+            return int(user_in), "int"
+        except ValueError:
+            return user_in, "string"
 
-class Identifier(Node):
-    def __init__(self, name):
-        super().__init__()
-        self.value = name
-    
-    def evaluate(self, symbol_table):
-        return symbol_table.get(self.value)
-    
-    def generate(self, symbol_table, code):
-        off=symbol_table.get_offset(self.value)
-        code.add(f'mov eax,[ebp{off:+}]')
+class BinOp(Node):
+    def __init__(self, op: str, left: Node, right: Node):
+        self.op = op
+        self.left = left
+        self.right = right
+
+    def evaluate(self, st):
+        lv, lt = self.left.evaluate(st)
+        rv, rt = self.right.evaluate(st)
+
+        if self.op in ("==", ">", "<"):
+            if lt != rt:
+                raise ValueError("Não é possível comparar tipos diferentes")
+            if self.op == "==":
+                return lv == rv, "bool"
+            if self.op == ">":
+                if lt == "int":
+                    return lv > rv, "bool"
+                return lv > rv, "bool"
+            if self.op == "<":
+                if lt == "int":
+                    return lv < rv, "bool"
+                return lv < rv, "bool"
+
+        if self.op in ("&&", "||"):
+            if lt != "bool" or rt != "bool":
+                raise ValueError("Operação lógica requer bool")
+            return (lv and rv) if self.op == "&&" else (lv or rv), "bool"
+
+        if self.op == "+":
+            if lt == rt == "int":
+                return lv + rv, "int"
+            def to_str(v, t):
+                if t == "bool":
+                    return "true" if v else "false"
+                return str(v)
+            return to_str(lv, lt) + to_str(rv, rt), "string"
+        if self.op == "-":
+            if lt == rt == "int":
+                return lv - rv, "int"
+            raise ValueError("Operador - exige ints")
+        if self.op == "*":
+            if lt == rt == "int":
+                return lv * rv, "int"
+            raise ValueError("Operador * exige ints")
+        if self.op == "/":
+            if lt == rt == "int":
+                if rv == 0:
+                    raise ValueError("Divisão por zero")
+                return lv // rv, "int"
+            raise ValueError("Operador / exige ints")
+        raise ValueError(f"Operador desconhecido {self.op}")
+
+class UnOp(Node):
+    def __init__(self, op: str, child: Node):
+        self.op = op
+        self.child = child
+
+    def evaluate(self, st):
+        v, t = self.child.evaluate(st)
+        if self.op == '!':
+            if t != 'bool':
+                raise ValueError('! requer bool')
+            return (not v), 'bool'
+        if self.op == '+':
+            if t != 'int':
+                raise ValueError('+ unário requer int')
+            return v, 'int'
+        if self.op == '-':
+            if t != 'int':
+                raise ValueError('- unário requer int')
+            return -v, 'int'
+        raise ValueError(f'Operador unário desconhecido {self.op}')
 
 class Assignment(Node):
-    def __init__(self, identifier, expression):
-        super().__init__()
-        self.children = [identifier, expression]
-    
-    def evaluate(self, symbol_table):
-        expr_val, expr_type = self.children[1].evaluate(symbol_table)
-        var_name = self.children[0].value
-        symbol_table.set(var_name, expr_val, expr_type)
-        return (expr_val, expr_type)
-    
+    def __init__(self, identifier: Identifier, expr: Node):
+        self.identifier = identifier
+        self.expr = expr
 
-    def generate(self, symbol_table, code):
-        self.children[1].generate(symbol_table, code)         
-        off = symbol_table.get_offset(self.children[0].value)
-        code.add(f"mov [ebp{off:+}], eax    ; atribui {self.children[0].value}")
+    def evaluate(self, st):
+        val, typ = self.expr.evaluate(st)
+        st.set(self.identifier.name, val, typ)
+        return val, typ
 
 class VarDecl(Node):
-    def __init__(self, identifier, var_type, expression=None):
-        super().__init__()
-        self.identifier = identifier
+    def __init__(self, name: str, var_type: str, expr: Optional[Node] = None):
+        self.name = name
         self.var_type = var_type
-        self.expression = expression
+        self.expr = expr
 
-    def evaluate(self, symbol_table):
-        symbol_table.declare(self.identifier, self.var_type)
-        if self.expression is not None:
-            val, val_type = self.expression.evaluate(symbol_table)
-            if val_type != self.var_type:
-                raise ValueError(f"Incompatibilidade de tipo ao inicializar '{self.identifier}'. Esperado {self.var_type}, obteve {val_type}")
-            symbol_table.set(self.identifier, val, val_type)
-            return (val, val_type)
-        return (None, None)
+    def evaluate(self, st):
+        st.declare(self.name, SymbolEntry(self.var_type, is_function=False))
+        if self.expr is not None:
+            val, typ = self.expr.evaluate(st)
+            if typ != self.var_type:
+                raise ValueError(
+                    f"Incompatibilidade de tipo ao inicializar '{self.name}'. Esperado {self.var_type}, obteve {typ}"
+                )
+            st.set(self.name, val, typ)
+            return val, typ
+        return None, None
+
+class Return(Node):
+    def __init__(self, expr: Node):
+        self.expr = expr
+
+    def evaluate(self, st):
+        val, typ = self.expr.evaluate(st)
+        raise ReturnSignal(val, typ)
+
+class Block(Node):
+    def __init__(self, statements: List[Node]):
+        self.statements = statements
+
+    def evaluate(self, st):
+        for stmt in self.statements:
+            try:
+                if isinstance(stmt, Block):
+                    nested = SymbolTable(parent=st)
+                    result = stmt.evaluate(nested)
+                else:
+                    result = stmt.evaluate(st)
+            except ReturnSignal as rs:
+                raise rs
+        return None, None
+
+class If(Node):
+    def __init__(self, cond: Node, then_block: Block, else_block: Optional[Block]):
+        self.cond = cond
+        self.then_block = then_block
+        self.else_block = else_block
+
+    def evaluate(self, st):
+        cond_val, cond_type = self.cond.evaluate(st)
+        if cond_type != 'bool':
+            raise ValueError('Condição do if deve ser bool')
+        try:
+            if cond_val:
+                return self.then_block.evaluate(SymbolTable(parent=st))
+            elif self.else_block is not None:
+                return self.else_block.evaluate(SymbolTable(parent=st))
+            return None, None
+        except ReturnSignal as rs:
+            raise rs
+
+class For(Node):
+    def __init__(self, cond: Node, block: Block):
+        self.cond = cond
+        self.block = block
+
+    def evaluate(self, st):
+        while True:
+            cond_val, cond_type = self.cond.evaluate(st)
+            if cond_type != 'bool':
+                raise ValueError('Condição do for deve ser bool')
+            if not cond_val:
+                break
+            try:
+                self.block.evaluate(SymbolTable(parent=st))
+            except ReturnSignal as rs:
+                raise rs
+        return None, None
+
+class FuncDec(Node):
+    def __init__(self, name: str, parameters: List[Tuple[str, str]], ret_type: str, body: Block):
+        self.name = name
+        self.parameters = parameters 
+        self.ret_type = ret_type
+        self.body = body
+
+    def evaluate(self, st):
+        st.declare(self.name, SymbolEntry("function", value=self, is_function=True, ret_type=self.ret_type))
+        return None, None
+
+class FuncCall(Node):
+    def __init__(self, name: str, arg_exprs: List[Node]):
+        self.name = name
+        self.arg_exprs = arg_exprs
+
+    def evaluate(self, st):
+        entry = st.get_entry(self.name)
+        if not entry.is_function:
+            raise ValueError(f'"{self.name}" não é uma função')
+        func_node: FuncDec = entry.value 
+        if len(func_node.parameters) != len(self.arg_exprs):
+            raise ValueError(f'Número incorreto de argumentos para {self.name}')
+
+        call_table = SymbolTable(parent=st)
+        for (param_name, param_type), arg_expr in zip(func_node.parameters, self.arg_exprs):
+            val, typ = arg_expr.evaluate(st)
+            if typ != param_type:
+                raise ValueError(f'Tipo inválido para parâmetro {param_name}: esperado {param_type}, obteve {typ}')
+            call_table.declare(param_name, SymbolEntry(param_type, value=val))
+
+        try:
+            func_node.body.evaluate(call_table)
+        except ReturnSignal as rs:
+            if func_node.ret_type != rs.value_type:
+                raise ValueError(f'Função {self.name} deve retornar {func_node.ret_type}, obteve {rs.value_type}')
+            return rs.value, rs.value_type
+        if func_node.ret_type != 'void':
+            raise ValueError(f'Função {self.name} deve retornar {func_node.ret_type}')
+        return None, None
     
-    def generate(self, symbol_table, code):
-        symbol_table.declare(self.identifier, self.var_type)
-        code.add(f"sub esp, 4    ; aloca {self.identifier}")
-        if self.expression:
-            self.expression.generate(symbol_table, code)
-            offset = symbol_table.get_offset(self.identifier)
-            code.add(f"mov [ebp{offset:+}], eax    ; inicializa {self.identifier}")
-
 class Parser:
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-        self.tokenizer.selectNext()
-
-    def parseStatement(self):
-        # var x int [= expr]
-        if self.tokenizer.next.type == 'VAR':
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'IDENTIFIER':
-                raise ValueError("Esperado identificador após 'var'")
-            var_name = self.tokenizer.next.value
-            self.tokenizer.selectNext()
-
-            if self.tokenizer.next.type not in ('INT_TYPE','BOOL_TYPE','STRING_TYPE'):
-                raise ValueError("Esperado tipo após nome da variável. Use: int, bool ou string.")
-            if self.tokenizer.next.type == 'INT_TYPE':
-                var_type = 'int'
-            elif self.tokenizer.next.type == 'BOOL_TYPE':
-                var_type = 'bool'
-            else:
-                var_type = 'string'
-            self.tokenizer.selectNext()
-
-            expr = None
-            if self.tokenizer.next.type == 'ASSIGN':
-                self.tokenizer.selectNext()
-                expr = self.parseBExpression()
-            
-                if self.tokenizer.next.type not in (
-                    'LBRACE', 'RBRACE', 'IF', 'FOR', 
-                    'PRINTLN', 'IDENTIFIER', 'EOF', 'VAR'
-                ):
-                    raise ValueError(f"Token inesperado após expressão de atribuição: {self.tokenizer.next}")
-            
-            return VarDecl(var_name, var_type, expr)
-        
-        # Instrução println: Println(expr)
-        if self.tokenizer.next.type == 'PRINTLN':
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'LPAREN':
-                raise ValueError('Parêntese de abertura esperado')
-            self.tokenizer.selectNext()
-            expression = self.parseBExpression()
-            if self.tokenizer.next.type != 'RPAREN':
-                raise ValueError('Parêntese de fechamento esperado')
-            self.tokenizer.selectNext()
-            return Println(expression)
-
-        # Bloco de instruções {...}
-        elif self.tokenizer.next.type == 'LBRACE':
-            self.tokenizer.selectNext()
-            statements = []
-            while self.tokenizer.next.type != 'RBRACE':
-                if self.tokenizer.next.type == 'LBRACE':
-                    raise ValueError('Esperado } após o bloco')
-                statement = self.parseStatement()
-                statements.append(statement)
-                if (self.tokenizer.next.type == 'LBRACE' 
-                    and self.tokenizer.next.type != 'RBRACE'):
-                    raise ValueError('Esperado } após o bloco')
-            self.tokenizer.selectNext()
-            return Block(statements)
-
-        # Atribuição: identificador = expr
-        elif self.tokenizer.next.type == 'IDENTIFIER':
-            identifier = Identifier(self.tokenizer.next.value)
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'ASSIGN':
-                raise ValueError('Esperado = após identificador')
-            self.tokenizer.selectNext()
-            expression = self.parseBExpression()
-            return Assignment(identifier, expression)
-        
-        # If
-        if self.tokenizer.next.type == 'IF':
-            self.tokenizer.selectNext()
-            condition = self.parseBExpression()
-            if self.tokenizer.next.type != 'LBRACE':
-                raise ValueError('Esperado { após if')
-            then_block = self.parseStatement()
-            if isinstance(then_block, Block) and not then_block.children:
-                # raise ValueError("Bloco do if está vazio")
-                then_block = Block([NoOp()])
-            else_block = None
-            if self.tokenizer.next.type == 'ELSE':
-                self.tokenizer.selectNext()
-                if self.tokenizer.next.type != 'LBRACE':
-                    raise ValueError('Esperado { após else')
-                else_block = self.parseStatement()
-                if isinstance(else_block, Block) and not else_block.children:
-                    raise ValueError("Bloco do else está vazio")
-            return If(condition, then_block, else_block)
-        
-        # Loop for
-        if self.tokenizer.next.type == 'FOR':
-            self.tokenizer.selectNext()
-            condition = self.parseBExpression()
-            if self.tokenizer.next.type != 'LBRACE':
-                raise ValueError('Esperado { imediatamente após condição do for')
-            block = self.parseStatement()
-            if isinstance(block, Block) and not block.children:
-                raise ValueError("Bloco do for está vazio")
-            return For(NoOp(), condition, NoOp(), block)
-        
-        else:
-            return self.parseBExpression()
-
-    def parseBExpression(self):
-        result = self.parseBTerm()
-        while self.tokenizer.next.type == 'OR':
-            self.tokenizer.selectNext()
-            right = self.parseBTerm()
-            result = BinOp('||', result, right)
-        return result
-    
-    def parseBTerm(self):
-        result = self.parseRelExpression()
-        while self.tokenizer.next.type == 'AND':
-            self.tokenizer.selectNext()
-            right = self.parseRelExpression()
-            result = BinOp('&&', result, right)
-        return result
-
-    def parseRelExpression(self):
-        result = self.parseExpression()
-        while self.tokenizer.next.type in ('LESS', 'GREATER', 'EQUALS'):
-            if self.tokenizer.next.type == 'LESS':
-                self.tokenizer.selectNext()
-                right = self.parseExpression()
-                result = BinOp('<', result, right)
-            elif self.tokenizer.next.type == 'GREATER':
-                self.tokenizer.selectNext()
-                right = self.parseExpression()
-                result = BinOp('>', result, right)
-            elif self.tokenizer.next.type == 'EQUALS':
-                self.tokenizer.selectNext()
-                right = self.parseExpression()
-                result = BinOp('==', result, right)
-        return result
-
-    def parseExpression(self):
-        result = self.parseTerm()
-        while self.tokenizer.next.type in ('PLUS', 'MINUS'):
-            if self.tokenizer.next.type == 'PLUS':
-                self.tokenizer.selectNext()
-                right = self.parseTerm()
-                result = BinOp('+', result, right)
-            elif self.tokenizer.next.type == 'MINUS':
-                self.tokenizer.selectNext()
-                right = self.parseTerm()
-                result = BinOp('-', result, right)
-        return result
-
-    def parseTerm(self):
-        result = self.parseFactor()
-        while self.tokenizer.next.type in ('MULTIPLY', 'DIVIDE'):
-            if self.tokenizer.next.type == 'MULTIPLY':
-                self.tokenizer.selectNext()
-                right = self.parseFactor()
-                result = BinOp('*', result, right)
-            elif self.tokenizer.next.type == 'DIVIDE':
-                self.tokenizer.selectNext()
-                right = self.parseFactor()
-                result = BinOp('/', result, right)
-        return result
-
-    def parseFactor(self):
-        if self.tokenizer.next.type == 'NUMBER':
-            result = IntVal(self.tokenizer.next.value)
-            self.tokenizer.selectNext()
-            return result
-        elif self.tokenizer.next.type == 'STRING':
-            result = StrVal(self.tokenizer.next.value)
-            self.tokenizer.selectNext()
-            return result
-        elif self.tokenizer.next.type == 'LPAREN':
-            self.tokenizer.selectNext()
-            result = self.parseBExpression()
-            if self.tokenizer.next.type != 'RPAREN':
-                raise ValueError('Parêntese de fechamento esperado')
-            self.tokenizer.selectNext()
-            return result
-        elif self.tokenizer.next.type == 'PLUS':
-            self.tokenizer.selectNext()
-            return UnOp('+', self.parseFactor())
-        elif self.tokenizer.next.type == 'MINUS':
-            self.tokenizer.selectNext()
-            return UnOp('-', self.parseFactor())
-        elif self.tokenizer.next.type == 'NOT':
-            self.tokenizer.selectNext()
-            return UnOp('!', self.parseFactor())
-        elif self.tokenizer.next.type == 'IDENTIFIER':
-            result = Identifier(self.tokenizer.next.value)
-            self.tokenizer.selectNext()
-            return result
-        elif self.tokenizer.next.type == 'SCAN':
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'LPAREN':
-                raise ValueError('Parêntese de abertura esperado após Scan')
-            self.tokenizer.selectNext()
-            if self.tokenizer.next.type != 'RPAREN':
-                raise ValueError('Parêntese de fechamento esperado')
-            self.tokenizer.selectNext()
-            return Scan()
-        else:
-            raise ValueError(f"Fator inválido ou não suportado: {self.tokenizer.next.type}")
+    def __init__(self, tokenizer: Tokenizer):
+        self.tok = tokenizer
 
     def parse(self):
-        if self.tokenizer.next.type != 'LBRACE':
-            raise ValueError('Esperado { no início do bloco')
-        block = self.parseStatement()
-        if self.tokenizer.next.type != 'EOF':
-            raise ValueError('Esperado EOF após o bloco')
-        return block
+        program = self.parse_program()
+        program.statements.append(FuncCall("main", []))
+        if self.tok.next.type != 'EOF':
+            raise ValueError('Tokens restantes após fim do programa')
+        return program
 
-def main(file):
+    def consume(self, expected_type: str):
+        if self.tok.next.type != expected_type:
+            raise ValueError(f'Esperado {expected_type}, obteve {self.tok.next.type}')
+        self.tok.select_next()
+
+    def parse_program(self):
+        self.consume('LBRACE')
+        stmts: List[Node] = []
+        while self.tok.next.type != 'RBRACE':
+            stmts.append(self.parse_statement())
+        self.consume('RBRACE')
+        return Block(stmts)
+
+    def parse_statement(self) -> Node:
+        tok_type = self.tok.next.type
+
+        if tok_type == 'VAR':
+            self.tok.select_next()
+            if self.tok.next.type != 'IDENTIFIER':
+                raise ValueError('Esperado identificador após var')
+            var_name = self.tok.next.value
+            self.tok.select_next()
+            if self.tok.next.type not in ('INT_TYPE', 'BOOL_TYPE', 'STRING_TYPE'):
+                raise ValueError('Tipo inválido para variável')
+            var_type_map = {
+                'INT_TYPE': 'int',
+                'BOOL_TYPE': 'bool',
+                'STRING_TYPE': 'string',
+            }
+            var_type = var_type_map[self.tok.next.type]
+            self.tok.select_next()
+            init_expr = None
+            if self.tok.next.type == 'ASSIGN':
+                self.tok.select_next()
+                init_expr = self.parse_b_expression()
+            return VarDecl(var_name, var_type, init_expr)
+
+        if tok_type == 'FUNC':
+            return self.parse_func_declaration()
+
+        if tok_type == 'RETURN':
+            self.tok.select_next()
+            expr = self.parse_b_expression()
+            return Return(expr)
+
+        if tok_type == 'PRINTLN':
+            self.tok.select_next()
+            self.consume('LPAREN')
+            expr = self.parse_b_expression()
+            self.consume('RPAREN')
+            return Println(expr)
+
+        if tok_type == 'LBRACE':
+            self.tok.select_next()
+            stmts: List[Node] = []
+            while self.tok.next.type != 'RBRACE':
+                stmts.append(self.parse_statement())
+            self.consume('RBRACE')
+            return Block(stmts)
+
+        if tok_type == 'IF':
+            self.tok.select_next()
+            cond = self.parse_b_expression()
+            self.consume('LBRACE')
+            then_block = self.parse_block_contents()
+            else_block = None
+            if self.tok.next.type == 'ELSE':
+                self.tok.select_next()
+                self.consume('LBRACE')
+                else_block = self.parse_block_contents()
+            return If(cond, then_block, else_block)
+
+        if tok_type == 'FOR':
+            self.tok.select_next()
+            cond = self.parse_b_expression()
+            self.consume('LBRACE')
+            block = self.parse_block_contents()
+            return For(cond, block)
+
+        if tok_type == 'IDENTIFIER':
+            ident_name = self.tok.next.value
+            self.tok.select_next()
+            if self.tok.next.type == 'ASSIGN':
+                self.tok.select_next()
+                expr = self.parse_b_expression()
+                return Assignment(Identifier(ident_name), expr)
+            elif self.tok.next.type == 'LPAREN':
+                args = self.parse_argument_list()
+                return FuncCall(ident_name, args)
+            else:
+                raise ValueError('Esperado = ou ( após identificador')
+
+        return self.parse_b_expression()
+
+    def parse_block_contents(self) -> Block:
+        stmts: List[Node] = []
+        while self.tok.next.type != 'RBRACE':
+            stmts.append(self.parse_statement())
+        self.consume('RBRACE')
+        return Block(stmts)
+
+    def parse_func_declaration(self) -> FuncDec:
+        self.tok.select_next()
+        if self.tok.next.type != 'IDENTIFIER':
+            raise ValueError('Esperado nome da função')
+        func_name = self.tok.next.value
+        self.tok.select_next()
+        self.consume('LPAREN')
+        params: List[Tuple[str, str]] = []
+        if self.tok.next.type != 'RPAREN':
+            while True:
+                if self.tok.next.type != 'IDENTIFIER':
+                    raise ValueError('Esperado nome do parâmetro')
+                param_name = self.tok.next.value
+                self.tok.select_next()
+                if self.tok.next.type not in ('INT_TYPE', 'BOOL_TYPE', 'STRING_TYPE'):
+                    raise ValueError('Tipo inválido de parâmetro')
+                type_map = {
+                    'INT_TYPE': 'int',
+                    'BOOL_TYPE': 'bool',
+                    'STRING_TYPE': 'string',
+                }
+                param_type = type_map[self.tok.next.type]
+                self.tok.select_next()
+                params.append((param_name, param_type))
+                if self.tok.next.type == 'COMMA':
+                    self.tok.select_next()
+                    continue
+                break
+        self.consume('RPAREN')
+        self.tok._advance_while(str.isspace)
+        
+        if self.tok.next.type not in ('INT_TYPE', 'BOOL_TYPE', 'STRING_TYPE'):
+            current_pos = self.tok.position
+            while current_pos < len(self.tok.source) and self.tok.source[current_pos].isspace():
+                current_pos += 1
+            
+            if current_pos < len(self.tok.source):
+                if current_pos + 3 <= len(self.tok.source) and self.tok.source[current_pos:current_pos+3] == "int":
+                    ret_type = "int"
+                    self.tok.position = current_pos + 3
+                    self.tok.select_next()
+                elif current_pos + 4 <= len(self.tok.source) and self.tok.source[current_pos:current_pos+4] == "bool":
+                    ret_type = "bool"
+                    self.tok.position = current_pos + 4
+                    self.tok.select_next()
+                elif current_pos + 6 <= len(self.tok.source) and self.tok.source[current_pos:current_pos+6] == "string":
+                    ret_type = "string"
+                    self.tok.position = current_pos + 6
+                    self.tok.select_next()
+                else:
+                    ret_type = "void"
+            else:
+                ret_type = "void"
+        else:
+            ret_type = {
+                'INT_TYPE': 'int',
+                'BOOL_TYPE': 'bool',
+                'STRING_TYPE': 'string',
+                'VOID_TYPE': 'void',
+            }[self.tok.next.type]
+            self.tok.select_next()
+        
+        self.consume('LBRACE')
+        body_block = self.parse_block_contents()
+        return FuncDec(func_name, params, ret_type, body_block)
+
+    def parse_argument_list(self) -> List[Node]:
+        self.consume('LPAREN')
+        args: List[Node] = []
+        if self.tok.next.type != 'RPAREN':
+            while True:
+                args.append(self.parse_b_expression())
+                if self.tok.next.type == 'COMMA':
+                    self.tok.select_next()
+                    continue
+                break
+        self.consume('RPAREN')
+        return args
+
+    def parse_b_expression(self):
+        node = self.parse_b_term()
+        while self.tok.next.type == 'OR':
+            self.tok.select_next()
+            node = BinOp('||', node, self.parse_b_term())
+        return node
+
+    def parse_b_term(self):
+        node = self.parse_rel_expression()
+        while self.tok.next.type == 'AND':
+            self.tok.select_next()
+            node = BinOp('&&', node, self.parse_rel_expression())
+        return node
+
+    def parse_rel_expression(self):
+        node = self.parse_expression()
+        while self.tok.next.type in ('LESS', 'GREATER', 'EQUALS'):
+            if self.tok.next.type == 'LESS':
+                self.tok.select_next()
+                node = BinOp('<', node, self.parse_expression())
+            elif self.tok.next.type == 'GREATER':
+                self.tok.select_next()
+                node = BinOp('>', node, self.parse_expression())
+            elif self.tok.next.type == 'EQUALS':
+                self.tok.select_next()
+                node = BinOp('==', node, self.parse_expression())
+        return node
+
+    def parse_expression(self):
+        node = self.parse_term()
+        while self.tok.next.type in ('PLUS', 'MINUS'):
+            if self.tok.next.type == 'PLUS':
+                self.tok.select_next()
+                node = BinOp('+', node, self.parse_term())
+            else:
+                self.tok.select_next()
+                node = BinOp('-', node, self.parse_term())
+        return node
+
+    def parse_term(self):
+        node = self.parse_factor()
+        while self.tok.next.type in ('MULTIPLY', 'DIVIDE'):
+            if self.tok.next.type == 'MULTIPLY':
+                self.tok.select_next()
+                node = BinOp('*', node, self.parse_factor())
+            else:
+                self.tok.select_next()
+                node = BinOp('/', node, self.parse_factor())
+        return node
+
+    def parse_factor(self):
+        tok_type = self.tok.next.type
+        if tok_type == 'NUMBER':
+            val = IntVal(self.tok.next.value)
+            self.tok.select_next()
+            return val
+        if tok_type == 'STRING':
+            val = StrVal(self.tok.next.value)
+            self.tok.select_next()
+            return val
+        if tok_type == 'IDENTIFIER':
+            ident_name = self.tok.next.value
+            self.tok.select_next()
+            if self.tok.next.type == 'LPAREN':
+                args = self.parse_argument_list()
+                return FuncCall(ident_name, args)
+            return Identifier(ident_name)
+        if tok_type == 'LPAREN':
+            self.tok.select_next()
+            expr = self.parse_b_expression()
+            self.consume('RPAREN')
+            return expr
+        if tok_type == 'PLUS':
+            self.tok.select_next()
+            return UnOp('+', self.parse_factor())
+        if tok_type == 'MINUS':
+            self.tok.select_next()
+            return UnOp('-', self.parse_factor())
+        if tok_type == 'NOT':
+            self.tok.select_next()
+            return UnOp('!', self.parse_factor())
+        if tok_type == 'SCAN':
+            self.tok.select_next()
+            self.consume('LPAREN')
+            self.consume('RPAREN')
+            return Scan()
+        raise ValueError(f'Fator inválido ou não suportado: {tok_type}')
+
+def run(code: str):
+    filtered = PrePro.filter(code)
+    tk = Tokenizer(filtered)
+    parser = Parser(tk)
+    ast_root = parser.parse()
+    global_st = SymbolTable() 
     try:
-        with open(file, 'r') as f:
-            code = f.read()
-        
-        filtered_code = PrePro.filter(code)
+        ast_root.evaluate(global_st)
+    except ReturnSignal:
+        raise ValueError('Return fora de função')
 
-        if not filtered_code.strip():
-            raise ValueError('Código vazio')
-        
-        tokenizer = Tokenizer(filtered_code)
-        parser = Parser(tokenizer)
-        ast = parser.parse()
-
-        symbol_table = SymbolTable()
-
-        code = Code()
-        ast.generate(symbol_table, code)
-        code.write(file)
-
-        # result = ast.evaluate(symbol_table)
-        # return result
-    except FileNotFoundError:
-        print(f"Erro: Arquivo '{file}' não encontrado.")
-        sys.exit(1)
-    except Exception as e:
-        raise e
-
-if __name__ == '__main__':
+def main():
     if len(sys.argv) != 2:
         print("Uso: python3 main.py <arquivo>")
         sys.exit(1)
-    
-    file = sys.argv[1]
-    main(file)
+    file_path = sys.argv[1]
+    try:
+        with open(file_path, 'r') as f:
+            code = f.read()
+        run(code)
+    except FileNotFoundError:
+        print(f"Erro: Arquivo '{file_path}' não encontrado.")
+    except Exception as e:
+        print(f"Erro: {e}")
+        raise e
+
+if __name__ == '__main__':
+    main()
