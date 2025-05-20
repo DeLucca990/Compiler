@@ -216,6 +216,10 @@ class Identifier(Node):
     def evaluate(self, st):
         return st.get(self.name)
 
+    def generate(self, symbol_table, code):
+        for statement in self.children:
+            statement.generate(symbol_table, code)
+
 class Println(Node):
     def __init__(self, expr: Node):
         self.expr = expr
