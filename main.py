@@ -495,6 +495,8 @@ class Parser:
             if self.tok.next.type == 'ASSIGN':
                 self.tok.select_next()
                 init_expr = self.parse_b_expression()
+            if self.tok.next.type not in ('EOF', 'VAR', 'FUNC', 'RETURN', 'PRINTLN', 'LBRACE', 'IF', 'FOR', 'IDENTIFIER', 'RBRACE'):
+                raise ValueError(f'Unexpected token {self.tok.next.type} (expected EOL)')
             return VarDecl(var_name, var_type, init_expr)
 
         if tok_type == 'FUNC':
@@ -556,7 +558,11 @@ class Parser:
 
     def parse_block_contents(self) -> Block:
         stmts: List[Node] = []
+        if self.tok.next.type == 'RBRACE':
+            raise ValueError("Unexpected token RBRACE (empty block)")
         while self.tok.next.type != 'RBRACE':
+            if self.tok.next.type == 'FUNC':
+                raise ValueError(f"Unexpected token FUNC (function declarations not allowed in this context)")
             stmts.append(self.parse_statement())
         self.consume('RBRACE')
         return Block(stmts)
