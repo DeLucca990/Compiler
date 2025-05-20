@@ -461,11 +461,16 @@ class Parser:
         self.tok.select_next()
 
     def parse_program(self):
-        self.consume('LBRACE')
         stmts: List[Node] = []
-        while self.tok.next.type != 'RBRACE':
-            stmts.append(self.parse_statement())
-        self.consume('RBRACE')
+        if self.tok.next.type == 'LBRACE':
+            self.tok.select_next()
+            while self.tok.next.type != 'RBRACE':
+                stmts.append(self.parse_statement())
+            self.consume('RBRACE')
+        else:
+            while self.tok.next.type != 'EOF':
+                stmts.append(self.parse_statement())
+
         return Block(stmts)
 
     def parse_statement(self) -> Node:
